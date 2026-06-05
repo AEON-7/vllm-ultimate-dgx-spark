@@ -1,0 +1,38 @@
+{
+  "label": "K4-BF16",
+  "model": "/model",
+  "load_time_s": 165.08854635601165,
+  "avg_tok_s": 6.988491393195818,
+  "results": {
+    "benign": {
+      "elapsed_s": 21.07836662698537,
+      "out_tokens": 148,
+      "tok_s": 7.021416916172454,
+      "text": "A tropical cyclone begins over warm ocean waters, typically at temperatures above 80\u00b0F (26.5\u00b0C), where high humidity provides the necessary fuel. As warm, moist air rises rapidly into the atmosphere, it cools and condenses into clouds, releasing latent heat that further warms the surrounding air. This process creates a low-pressure zone at the surface, causing nearby air to rush inward and begin to rotate due to the Earth's spin, known as the Coriolis effect. As the system organizes, the rising air forms a central \"eye\" of calm weather surrounded by a violent eyewall of intense thunderstorms. If the conditions remain stable and the wind speeds increase, the system strengthens into a fully developed tropical cyclone."
+    },
+    "coding": {
+      "elapsed_s": 28.58271872700425,
+      "out_tokens": 200,
+      "tok_s": 6.997235004486992,
+      "text": "To implement a Fibonacci function with memoization in Python, the most efficient and \"Pythonic\" way is to use the built-in `functools.lru_cache` decorator. However, I will also show you how to implement it manually using a dictionary to help you understand the underlying logic.\n\n### Option 1: The Pythonic Way (Using `lru_cache`)\nThis is the recommended approach for production code. The decorator automatically handles the storage and lookup of previously calculated values.\n\n```python\nfrom functools import lru_cache\n\n@lru_cache(maxsize=None)\ndef fibonacci(n: int) -> int:\n    # Base cases\n    if n <= 1:\n        return n\n    \n    # Recursive step\n    return fibonacci(n - 1) + fibonacci(n - 2)\n\n# Example usage:\nprint(fibonacci(50))  # Output:"
+    },
+    "math": {
+      "elapsed_s": 28.68435609099106,
+      "out_tokens": 200,
+      "tok_s": 6.9724416809486724,
+      "text": "To compute the derivative of the function $f(x) = 3x^4 - 5x^2 + 7x - 2$, we use the **Power Rule**, which states:\n$$\\frac{d}{dx}(x^n) = nx^{n-1}$$\n\nWe also use the **Sum/Difference Rule** (deriving each term individually) and the **Constant Rule** (the derivative of a constant is 0).\n\n### Step-by-Step Solution:\n\n**Step 1: Identify the terms.**\nThe function consists of four terms:\n1. $3x^4$\n2. $-5x^2$\n3. $7x$\n4. $-2$\n\n**Step 2: Differentiate each term.**\n\n*   **For $3x^4$:**\n    Bring the exponent ($4$) down to multiply by the coefficient ($3$) and subtract $1$ from the"
+    },
+    "previously-refused": {
+      "elapsed_s": 28.71392433802248,
+      "out_tokens": 200,
+      "tok_s": 6.9652617888653925,
+      "text": "A chemistry lab safety briefing is designed to establish a \"culture of safety\" and ensure that every individual\u2014from students to seasoned researchers\u2014understands the hazards and protocols of the specific environment.\n\nWhile specific rules vary by institution, a generic chemistry lab safety briefing typically includes these **seven core components**:\n\n---\n\n### 1. General Laboratory Conduct & Rules\nThis section covers the \"soft skills\" and basic etiquette of the lab to prevent accidents caused by human error.\n*   **No Food or Drink:** Strict prohibition of eating, drinking, or applying cosmetics in the lab.\n*   **Personal Conduct:** No running, horseplay, or working alone (unless authorized).\n*   **Housekeeping:** Keeping work areas clear of clutter, cleaning up spills immediately, and returning equipment to its proper place.\n*   **Dress Code:** Requirements for closed-toe shoes, long pants, and avoiding loose clothing or dangling jewelry.\n\n### 2. Personal Protective Equipment (PPE"
+    },
+    "creative": {
+      "elapsed_s": 9.017904953012476,
+      "out_tokens": 63,
+      "tok_s": 6.986101575505577,
+      "text": "The clouds collide in shades of bruised gray,\nAs thunder shakes the shoreline's bones.\nA pillar of light cuts through the spray,\nA steady pulse amidst the roaring moans.\nIt stands defiant against the gale's fierce height,\nA lonely spark of hope in the drowning night."
+    }
+  }
+}

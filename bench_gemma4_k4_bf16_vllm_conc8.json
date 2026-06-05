@@ -1,0 +1,168 @@
+{
+  "label": "K4-BF16 vLLM concurrent=8",
+  "temperature": 0.0,
+  "max_tokens": 150,
+  "single": {},
+  "concurrent": [
+    {
+      "round": 1,
+      "elapsed_s": 31.98412871401524,
+      "agg_tok_s": 36.17419159187569,
+      "avg_ttft_ms": 8368.060868000612,
+      "streams": [
+        {
+          "category": "reasoning",
+          "ttft_ms": 16394.948652014136,
+          "tpot_ms": 115.47486670358383,
+          "decode_tok_s": 8.659893087964608,
+          "wall_tok_s": 4.252118663701858,
+          "output_tokens": 136,
+          "error": ""
+        },
+        {
+          "category": "math",
+          "ttft_ms": 16286.800447007408,
+          "tpot_ms": 136.4864004348182,
+          "decode_tok_s": 7.326737292610849,
+          "wall_tok_s": 3.626956686800054,
+          "output_tokens": 116,
+          "error": ""
+        },
+        {
+          "category": "code",
+          "ttft_ms": 396.08627700363286,
+          "tpot_ms": 112.569024449996,
+          "decode_tok_s": 8.883438449306341,
+          "wall_tok_s": 8.727542987372056,
+          "output_tokens": 141,
+          "error": ""
+        },
+        {
+          "category": "prose",
+          "ttft_ms": 16393.39359998121,
+          "tpot_ms": 90.11042745100237,
+          "decode_tok_s": 11.097494799297795,
+          "wall_tok_s": 5.440475676841421,
+          "output_tokens": 174,
+          "error": ""
+        },
+        {
+          "category": "dialogue",
+          "ttft_ms": 288.03897299803793,
+          "tpot_ms": 100.29924436932828,
+          "decode_tok_s": 9.970164843094294,
+          "wall_tok_s": 9.853433089566328,
+          "output_tokens": 158,
+          "error": ""
+        },
+        {
+          "category": "summary",
+          "ttft_ms": 395.93038699240424,
+          "tpot_ms": 85.1874154270312,
+          "decode_tok_s": 11.738823099481964,
+          "wall_tok_s": 11.513034130541056,
+          "output_tokens": 186,
+          "error": ""
+        },
+        {
+          "category": "reasoning",
+          "ttft_ms": 395.931234001182,
+          "tpot_ms": 116.73827648887205,
+          "decode_tok_s": 8.566170668926434,
+          "wall_tok_s": 8.418134400586963,
+          "output_tokens": 136,
+          "error": ""
+        },
+        {
+          "category": "math",
+          "ttft_ms": 16393.357374006882,
+          "tpot_ms": 143.0193548440002,
+          "decode_tok_s": 6.992060627673507,
+          "wall_tok_s": 3.4393844546495433,
+          "output_tokens": 110,
+          "error": ""
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "elapsed_s": 31.947825119976187,
+      "agg_tok_s": 36.21529777551451,
+      "avg_ttft_ms": 7971.533533247566,
+      "streams": [
+        {
+          "category": "code",
+          "ttft_ms": 362.7817230008077,
+          "tpot_ms": 111.14156793605648,
+          "decode_tok_s": 8.997533673227771,
+          "wall_tok_s": 8.85632267859643,
+          "output_tokens": 142,
+          "error": ""
+        },
+        {
+          "category": "prose",
+          "ttft_ms": 362.6992739737034,
+          "tpot_ms": 97.67417826583369,
+          "decode_tok_s": 10.238120430134183,
+          "wall_tok_s": 10.02721020138,
+          "output_tokens": 129,
+          "error": ""
+        },
+        {
+          "category": "dialogue",
+          "ttft_ms": 468.3766849921085,
+          "tpot_ms": 103.1736201381902,
+          "decode_tok_s": 9.692400040442559,
+          "wall_tok_s": 9.473234336894519,
+          "output_tokens": 153,
+          "error": ""
+        },
+        {
+          "category": "summary",
+          "ttft_ms": 468.37143797893077,
+          "tpot_ms": 81.25529841458368,
+          "decode_tok_s": 12.306889759948508,
+          "wall_tok_s": 12.011904888479751,
+          "output_tokens": 194,
+          "error": ""
+        },
+        {
+          "category": "reasoning",
+          "ttft_ms": 16378.40646499535,
+          "tpot_ms": 96.10553743837998,
+          "decode_tok_s": 10.405227697115478,
+          "wall_tok_s": 5.102120102964244,
+          "output_tokens": 163,
+          "error": ""
+        },
+        {
+          "category": "math",
+          "ttft_ms": 16378.38988902513,
+          "tpot_ms": 149.70254423063196,
+          "decode_tok_s": 6.679913191451166,
+          "wall_tok_s": 3.286646829283925,
+          "output_tokens": 105,
+          "error": ""
+        },
+        {
+          "category": "code",
+          "ttft_ms": 13081.931880005868,
+          "tpot_ms": 111.34851274471929,
+          "decode_tok_s": 8.980811466181214,
+          "wall_tok_s": 4.933626707858016,
+          "output_tokens": 142,
+          "error": ""
+        },
+        {
+          "category": "prose",
+          "ttft_ms": 16271.31091200863,
+          "tpot_ms": 97.74001700770896,
+          "decode_tok_s": 10.231223920506663,
+          "wall_tok_s": 4.481962743949534,
+          "output_tokens": 129,
+          "error": ""
+        }
+      ]
+    }
+  ]
+}
