@@ -1,0 +1,12 @@
+setup.py
+humming/__init__.py
+humming/config.py
+humming/dtypes.py
+humming/layer.py
+humming/schema.py
+humming/utils/__init__.py
+humming/utils/weight.py
+humming_stub.egg-info/PKG-INFO
+humming_stub.egg-info/SOURCES.txt
+humming_stub.egg-info/dependency_links.txt
+humming_stub.egg-info/top_level.txt
