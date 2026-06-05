@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: humming-stub
+Version: 0.0.0
+Summary: Stub package to satisfy vLLM's eager `from humming.* import ...` on systems without the real humming library installed.
+Dynamic: summary
