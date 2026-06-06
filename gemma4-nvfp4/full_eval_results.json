@@ -1,0 +1,30 @@
+{
+  "K4-BF16 (abliterated)": {
+    "mmlu": 80.4,
+    "mmlu_n": "285",
+    "he_syn": 99.4,
+    "he_fun": 83.5,
+    "ifeval": 90.0
+  },
+  "K4-NVFP4-MLP-only": {
+    "mmlu": 76.8,
+    "mmlu_n": "285",
+    "he_syn": 96.3,
+    "he_fun": 76.2,
+    "ifeval": 90.0
+  },
+  "K4-FP8": {
+    "mmlu": 80.4,
+    "mmlu_n": "285",
+    "he_syn": 99.4,
+    "he_fun": 85.39999999999999,
+    "ifeval": 90.0
+  },
+  "official-Google-BF16": {
+    "mmlu": 81.39999999999999,
+    "mmlu_n": "285",
+    "he_syn": 99.4,
+    "he_fun": 82.89999999999999,
+    "ifeval": 90.0
+  }
+}
