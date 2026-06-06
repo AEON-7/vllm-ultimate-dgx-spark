@@ -103,9 +103,12 @@ def main():
     ap.add_argument("--dst", default="/home/albert/models/Gemma-4-12B-AEON-K4-NVFP4")
     ap.add_argument("--config-name", default="NVFP4_AWQ_LITE_CFG",
                     choices=["NVFP4_AWQ_LITE_CFG", "NVFP4_AWQ_CLIP_CFG",
-                             "NVFP4_AWQ_FULL_CFG", "NVFP4_DEFAULT_CFG", "NVFP4_MLP_ONLY_CFG", "NVFP4_MLP_WEIGHT_ONLY_CFG"])
+                             "NVFP4_AWQ_FULL_CFG", "NVFP4_DEFAULT_CFG", "NVFP4_MLP_ONLY_CFG", "NVFP4_MLP_WEIGHT_ONLY_CFG",
+                             "FP8_DEFAULT_CFG", "FP8_PER_CHANNEL_PER_TOKEN_CFG"])
     ap.add_argument("--num-calibration-samples", type=int, default=2048)
     ap.add_argument("--max-length", type=int, default=1024)
+    ap.add_argument("--weight-only", action="store_true",
+                    help="Disable activation quantizer → W4A16 (FP4 weights, BF16 acts) for higher quality")
     args = ap.parse_args()
 
     os.makedirs(args.dst, exist_ok=True)
@@ -135,6 +138,20 @@ def main():
     info = install_excludes(config, EXCLUDE_PATTERNS)
     print(f"[config] using {args.config_name}; {info}", flush=True)
     print(f"  excludes: {EXCLUDE_PATTERNS}", flush=True)
+
+    # 4b. Optional: weight-only (W4A16) — disable the activation/input quantizer.
+    # Keeps activations in BF16 → no activation FP4 error (big quality win on
+    # precise-reasoning tasks like MMLU), at the cost of the FP4-activation GEMM
+    # speedup. vLLM serves this as W4A16_NVFP4.
+    if args.weight_only:
+        qc = config.get("quant_cfg", {})
+        n_disabled = 0
+        for key in list(qc.keys()):
+            if "input_quantizer" in key:
+                if isinstance(qc[key], dict):
+                    qc[key]["enable"] = False
+                    n_disabled += 1
+        print(f"[config] WEIGHT-ONLY (W4A16): disabled {n_disabled} input_quantizer rule(s)", flush=True)
 
     # 5. Calibrate + quantize
     print(f"[quantize] starting — this is the long step (1-3h on DGX Spark)", flush=True)
