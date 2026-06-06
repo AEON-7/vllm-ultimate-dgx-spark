@@ -20,8 +20,11 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
+
+CONCURRENCY = 12  # parallel API requests (vLLM serves 16 concurrent)
 
 # Reuse the dataset loaders + scoring harness from the transformers eval
 sys.path.insert(0, "/work")
@@ -31,6 +34,30 @@ from capability_eval import (  # noqa: E402
     run_humaneval_problem,
     IFEVAL_TASKS,
 )
+from datasets import load_dataset  # noqa: E402
+
+
+def load_mmlu_balanced(per_subject: int) -> list[dict]:
+    """Balanced MMLU across ALL 57 subjects (per_subject questions each).
+
+    The streaming 'all' loader returns abstract_algebra-first (a pathological
+    worst case for quantized models). This loads the full test set and samples
+    evenly across every subject for a fair, diverse measurement.
+    """
+    ds = load_dataset("cais/mmlu", "all", split="test")
+    by_subj: dict[str, list] = {}
+    for ex in ds:
+        by_subj.setdefault(ex["subject"], []).append(ex)
+    out = []
+    for subj in sorted(by_subj):
+        for ex in by_subj[subj][:per_subject]:
+            out.append({
+                "question": ex["question"],
+                "choices": ex["choices"],
+                "answer": "ABCD"[ex["answer"]],
+                "subject": ex["subject"],
+            })
+    return out
 
 
 def api_chat(base: str, model: str, prompt: str, max_tokens: int = 512,
@@ -56,37 +83,40 @@ def api_generate(base: str, model: str, prompt: str, max_tokens: int = 512) -> s
 
 # ---- MMLU (argmax over A/B/C/D first-token logprobs) ----
 
+def _mmlu_one(base, model, q):
+    prompt = (
+        "Answer this multiple choice question with just A, B, C, or D.\n\n"
+        f"{q['question']}\n\n"
+        + "\n".join(f"{l}. {c}" for l, c in zip("ABCD", q["choices"]))
+        + "\n\nAnswer:"
+    )
+    j = api_chat(base, model, prompt, max_tokens=1, logprobs=True, top_logprobs=20)
+    pick = None
+    try:
+        content_lp = j["choices"][0]["logprobs"]["content"]
+        if content_lp:
+            cand = {}
+            for tl in content_lp[0]["top_logprobs"]:
+                tok = tl["token"].strip().upper()
+                if tok in ("A", "B", "C", "D") and tok not in cand:
+                    cand[tok] = tl["logprob"]
+            if cand:
+                pick = max(cand.items(), key=lambda kv: kv[1])[0]
+    except (KeyError, IndexError, TypeError):
+        pass
+    if pick is None:
+        txt = (j["choices"][0]["message"]["content"] or "").strip().upper()
+        m = re.search(r"[ABCD]", txt)
+        pick = m.group(0) if m else "?"
+    return pick == q["answer"]
+
+
 def run_mmlu(base, model, questions):
-    correct = 0
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as ex:
+        oks = list(ex.map(lambda q: _mmlu_one(base, model, q), questions))
+    correct = sum(oks)
     by_subject = {}
-    for q in questions:
-        prompt = (
-            "Answer this multiple choice question with just A, B, C, or D.\n\n"
-            f"{q['question']}\n\n"
-            + "\n".join(f"{l}. {c}" for l, c in zip("ABCD", q["choices"]))
-            + "\n\nAnswer:"
-        )
-        j = api_chat(base, model, prompt, max_tokens=1, logprobs=True, top_logprobs=20)
-        pick = None
-        try:
-            content_lp = j["choices"][0]["logprobs"]["content"]
-            if content_lp:
-                cand = {}
-                for tl in content_lp[0]["top_logprobs"]:
-                    tok = tl["token"].strip().upper()
-                    if tok in ("A", "B", "C", "D") and tok not in cand:
-                        cand[tok] = tl["logprob"]
-                if cand:
-                    pick = max(cand.items(), key=lambda kv: kv[1])[0]
-        except (KeyError, IndexError, TypeError):
-            pass
-        if pick is None:
-            # fallback: greedy 1-token generation, parse a letter
-            txt = (j["choices"][0]["message"]["content"] or "").strip().upper()
-            m = re.search(r"[ABCD]", txt)
-            pick = m.group(0) if m else "?"
-        ok = pick == q["answer"]
-        correct += int(ok)
+    for q, ok in zip(questions, oks):
         s = by_subject.setdefault(q["subject"], {"total": 0, "correct": 0})
         s["total"] += 1
         s["correct"] += int(ok)
@@ -96,14 +126,20 @@ def run_mmlu(base, model, questions):
 
 # ---- HumanEval (reuse exec sandbox) ----
 
+def _he_gen(base, model, p):
+    return api_generate(
+        base, model,
+        f"Complete this Python function. Write only the function definition:\n\n```python\n{p['prompt']}```",
+        max_tokens=512,
+    )
+
+
 def run_humaneval(base, model, problems):
+    # Parallelize generation (the slow part); exec scoring is fast + sequential
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as ex:
+        gens = list(ex.map(lambda p: _he_gen(base, model, p), problems))
     results, syn, fun = [], 0, 0
-    for p in problems:
-        gen = api_generate(
-            base, model,
-            f"Complete this Python function. Write only the function definition:\n\n```python\n{p['prompt']}```",
-            max_tokens=512,
-        )
+    for p, gen in zip(problems, gens):
         r = run_humaneval_problem(p["prompt"], gen, p["test"], p["entry_point"])
         r["task_id"] = p["task_id"]
         results.append(r)
@@ -118,9 +154,10 @@ def run_humaneval(base, model, problems):
 
 def run_ifeval(base, model, n):
     tasks = (IFEVAL_TASKS * ((n // len(IFEVAL_TASKS)) + 1))[:n]
+    with ThreadPoolExecutor(max_workers=CONCURRENCY) as ex:
+        gens = list(ex.map(lambda t: api_generate(base, model, t["prompt"], max_tokens=200), tasks))
     passed, fails = 0, []
-    for t in tasks:
-        gen = api_generate(base, model, t["prompt"], max_tokens=200)
+    for t, gen in zip(tasks, gens):
         try:
             ok = bool(t["check"](gen))
         except Exception:
@@ -139,6 +176,8 @@ def main():
     ap.add_argument("--model", default="gemma12b")
     ap.add_argument("--label", default="model")
     ap.add_argument("--mmlu-n", type=int, default=100)
+    ap.add_argument("--mmlu-per-subject", type=int, default=0,
+                    help="If >0, use a balanced MMLU of N per subject across all 57 subjects")
     ap.add_argument("--he-n", type=int, default=40)
     ap.add_argument("--if-n", type=int, default=50)
     ap.add_argument("--out", default="")
@@ -146,7 +185,12 @@ def main():
 
     print(f"=== capability eval (vLLM API) — {args.label} ===", flush=True)
     print("loading datasets...", flush=True)
-    mmlu = load_mmlu(args.mmlu_n)
+    if args.mmlu_per_subject > 0:
+        mmlu = load_mmlu_balanced(args.mmlu_per_subject)
+        print(f"  MMLU balanced: {args.mmlu_per_subject}/subject across "
+              f"{len(set(q['subject'] for q in mmlu))} subjects = {len(mmlu)} Q", flush=True)
+    else:
+        mmlu = load_mmlu(args.mmlu_n)
     he = load_humaneval(args.he_n)
     print(f"  MMLU={len(mmlu)}  HumanEval={len(he)}  IFEval={args.if_n}", flush=True)
 
