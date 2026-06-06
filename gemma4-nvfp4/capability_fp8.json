@@ -1,0 +1,81 @@
+{
+  "label": "K4-FP8-pcpt",
+  "model": "gemma12b",
+  "mmlu": {
+    "accuracy": 0.65,
+    "correct": 65,
+    "total": 100,
+    "by_subject": {
+      "abstract_algebra": {
+        "total": 100,
+        "correct": 65
+      }
+    }
+  },
+  "humaneval": {
+    "syntactic_pass": 1.0,
+    "functional_pass": 0.6,
+    "syntactic_count": 40,
+    "functional_count": 24,
+    "total": 40,
+    "sample_results": [
+      {
+        "syntactic": true,
+        "functional": false,
+        "error": "NameError: name 'List' is not defined. Did you mean: 'list'?",
+        "task_id": "HumanEval/0"
+      },
+      {
+        "syntactic": true,
+        "functional": true,
+        "error": null,
+        "task_id": "HumanEval/1"
+      },
+      {
+        "syntactic": true,
+        "functional": true,
+        "error": null,
+        "task_id": "HumanEval/2"
+      },
+      {
+        "syntactic": true,
+        "functional": false,
+        "error": "NameError: name 'List' is not defined. Did you mean: 'list'?",
+        "task_id": "HumanEval/3"
+      },
+      {
+        "syntactic": true,
+        "functional": false,
+        "error": "NameError: name 'List' is not defined. Did you mean: 'list'?",
+        "task_id": "HumanEval/4"
+      }
+    ]
+  },
+  "ifeval": {
+    "pass_rate": 0.9,
+    "passed": 45,
+    "total": 50,
+    "sample_failures": [
+      {
+        "prompt": "Write a response that does not contain the letter 'e' anywhere.",
+        "gen": "I can do this. No \"e\" is in this script. It is fun."
+      },
+      {
+        "prompt": "Write a response that does not contain the letter 'e' anywhere.",
+        "gen": "I can do this. No \"e\" is in this script. It is fun."
+      },
+      {
+        "prompt": "Write a response that does not contain the letter 'e' anywhere.",
+        "gen": "I can do this. No \"e\" is in this script. It is fun."
+      },
+      {
+        "prompt": "Write a response that does not contain the letter 'e' anywhere.",
+        "gen": "I can do this. No \"e\" is in this script. It is fun."
+      },
+      {
+        "prompt": "Write a response that does not contain the letter 'e' anywhere.",
+        "gen": "I can do this. No \"e\" is in this script. It is fun."
+      }
+    ]
+  }
+}
