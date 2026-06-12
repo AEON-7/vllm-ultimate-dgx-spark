@@ -1,0 +1,25 @@
+# aeon-vllm-ultimate + PR#41703(+#40898): DFlash SWA drafter + rejected-slot
+# masking (fixes drafter-KV corruption under prefix caching) + Gemma4 fixes.
+# Thin Python overlay — both PRs touch only .py files; compiled artifacts unchanged.
+FROM ghcr.io/aeon-7/aeon-vllm-ultimate:latest
+LABEL aeon.layer="pr41703+pr40898 merged 2026-06-11" \
+      aeon.base="v0.22.2+pr44389.aeon (main@2026-06-05)" \
+      aeon.fixes="dflash-swa,rejected-ctx-slot-mask,gemma4-embed-norm,gemma4-softcap,flashattn-drafter"
+COPY overlay/vllm/ /usr/local/lib/python3.12/site-packages/vllm/
+# Re-apply AEON sm_121a patches (idempotent) — overlay replaced kv_cache_utils.py
+COPY patches/ /aeon-patches/
+RUN cd /aeon-patches && \
+    python3 patch_cuda_optional_import.py && \
+    python3 patch_kv_cache_utils.py && \
+    python3 patch_cudagraph_align.py && \
+    echo "[AEON patches] re-applied" && cd / && rm -rf /aeon-patches
+# Smoke: imports + the new SWA symbols present
+RUN python3 -c "\
+from vllm import LLM, SamplingParams; \
+import vllm.v1.spec_decode.dflash as d, vllm.model_executor.models.qwen3_dflash as q; \
+import inspect; src=inspect.getsource(q); \
+assert 'sliding_attention_layer_names' in src, 'SWA symbols missing'; \
+import vllm.v1.spec_decode.utils as u; usrc=inspect.getsource(u); \
+assert 'is_valid_ctx' in usrc, 'rejected-slot masking missing'; \
+print('overlay smoke: OK (SWA + slot masking present)')"
+ENTRYPOINT ["/bin/bash"]
