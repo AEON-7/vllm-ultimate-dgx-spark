@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 940 540" font-family="Segoe UI,Helvetica,Arial,sans-serif">
+<rect width="940" height="540" rx="14" fill="#0b0f16"/>
+<text x="80" y="38" fill="#e6edf3" font-size="24" font-weight="700">Qwen3.6-35B-A3B-heretic (NVFP4)</text>
+<text x="80" y="62" fill="#58a6ff" font-size="15" font-weight="600">Up to 740 tok/s aggregate at c=64 — scales without the pre-fix concurrency crash</text>
+<text x="80" y="84" fill="#8b98a9" font-size="12.5">Aggregate throughput (tok/s) vs concurrent requests &#183; DFlash on aeon-vllm-ultimate:latest &#183; scales cleanly to c=64</text>
+<line x1="80" y1="470.0" x2="790" y2="470.0" stroke="#1e2733" stroke-width="1"/>
+<text x="72" y="474.0" fill="#8b98a9" font-size="11" text-anchor="end">0</text>
+<line x1="80" y1="377.5" x2="790" y2="377.5" stroke="#1e2733" stroke-width="1"/>
+<text x="72" y="381.5" fill="#8b98a9" font-size="11" text-anchor="end">203</text>
+<line x1="80" y1="285.0" x2="790" y2="285.0" stroke="#1e2733" stroke-width="1"/>
+<text x="72" y="289.0" fill="#8b98a9" font-size="11" text-anchor="end">406</text>
+<line x1="80" y1="192.5" x2="790" y2="192.5" stroke="#1e2733" stroke-width="1"/>
+<text x="72" y="196.5" fill="#8b98a9" font-size="11" text-anchor="end">610</text>
+<line x1="80" y1="100.0" x2="790" y2="100.0" stroke="#1e2733" stroke-width="1"/>
+<text x="72" y="104.0" fill="#8b98a9" font-size="11" text-anchor="end">813</text>
+<text x="80.0" y="492.0" fill="#8b98a9" font-size="12" text-anchor="middle">c=1</text>
+<text x="257.5" y="492.0" fill="#8b98a9" font-size="12" text-anchor="middle">c=8</text>
+<text x="435.0" y="492.0" fill="#8b98a9" font-size="12" text-anchor="middle">c=16</text>
+<text x="612.5" y="492.0" fill="#8b98a9" font-size="12" text-anchor="middle">c=32</text>
+<text x="790.0" y="492.0" fill="#8b98a9" font-size="12" text-anchor="middle">c=64</text>
+<polyline points="80.0,429.5 257.5,306.2 435.0,259.2 612.5,211.5 790.0,193.2" fill="none" stroke="#3fb950" stroke-width="2.5"/>
+<circle cx="80.0" cy="429.5" r="3" fill="#3fb950"/>
+<circle cx="257.5" cy="306.2" r="3" fill="#3fb950"/>
+<circle cx="435.0" cy="259.2" r="3" fill="#3fb950"/>
+<circle cx="612.5" cy="211.5" r="3" fill="#3fb950"/>
+<circle cx="790.0" cy="193.2" r="3" fill="#3fb950"/>
+<text x="800" y="104.0" fill="#3fb950" font-size="12">Coding</text>
+<rect x="786" y="94" width="0" height="0"/>
+<polyline points="80.0,416.5 257.5,281.0 435.0,216.0 612.5,144.9 790.0,133.6" fill="none" stroke="#58a6ff" stroke-width="2.5"/>
+<circle cx="80.0" cy="416.5" r="3" fill="#58a6ff"/>
+<circle cx="257.5" cy="281.0" r="3" fill="#58a6ff"/>
+<circle cx="435.0" cy="216.0" r="3" fill="#58a6ff"/>
+<circle cx="612.5" cy="144.9" r="3" fill="#58a6ff"/>
+<circle cx="790.0" cy="133.6" r="3" fill="#58a6ff"/>
+<text x="800" y="126.0" fill="#58a6ff" font-size="12">Math</text>
+<rect x="786" y="116" width="0" height="0"/>
+<polyline points="80.0,417.9 257.5,293.6 435.0,234.4 612.5,169.8 790.0,165.9" fill="none" stroke="#bc8cff" stroke-width="2.5"/>
+<circle cx="80.0" cy="417.9" r="3" fill="#bc8cff"/>
+<circle cx="257.5" cy="293.6" r="3" fill="#bc8cff"/>
+<circle cx="435.0" cy="234.4" r="3" fill="#bc8cff"/>
+<circle cx="612.5" cy="169.8" r="3" fill="#bc8cff"/>
+<circle cx="790.0" cy="165.9" r="3" fill="#bc8cff"/>
+<text x="800" y="148.0" fill="#bc8cff" font-size="12">Reasoning</text>
+<rect x="786" y="138" width="0" height="0"/>
+<polyline points="80.0,437.0 257.5,355.4 435.0,305.5 612.5,272.3 790.0,274.9" fill="none" stroke="#f0883e" stroke-width="2.5"/>
+<circle cx="80.0" cy="437.0" r="3" fill="#f0883e"/>
+<circle cx="257.5" cy="355.4" r="3" fill="#f0883e"/>
+<circle cx="435.0" cy="305.5" r="3" fill="#f0883e"/>
+<circle cx="612.5" cy="272.3" r="3" fill="#f0883e"/>
+<circle cx="790.0" cy="274.9" r="3" fill="#f0883e"/>
+<text x="800" y="170.0" fill="#f0883e" font-size="12">Prose</text>
+<rect x="786" y="160" width="0" height="0"/>
+<polyline points="80.0,429.6 257.5,335.6 435.0,288.6 612.5,244.8 790.0,254.6" fill="none" stroke="#39c5cf" stroke-width="2.5"/>
+<circle cx="80.0" cy="429.6" r="3" fill="#39c5cf"/>
+<circle cx="257.5" cy="335.6" r="3" fill="#39c5cf"/>
+<circle cx="435.0" cy="288.6" r="3" fill="#39c5cf"/>
+<circle cx="612.5" cy="244.8" r="3" fill="#39c5cf"/>
+<circle cx="790.0" cy="254.6" r="3" fill="#39c5cf"/>
+<text x="800" y="192.0" fill="#39c5cf" font-size="12">Natural language</text>
+<rect x="786" y="182" width="0" height="0"/>
+<polyline points="80.0,434.7 257.5,288.8 435.0,216.7 612.5,158.8 790.0,144.4" fill="none" stroke="#e3b341" stroke-width="2.5"/>
+<circle cx="80.0" cy="434.7" r="3" fill="#e3b341"/>
+<circle cx="257.5" cy="288.8" r="3" fill="#e3b341"/>
+<circle cx="435.0" cy="216.7" r="3" fill="#e3b341"/>
+<circle cx="612.5" cy="158.8" r="3" fill="#e3b341"/>
+<circle cx="790.0" cy="144.4" r="3" fill="#e3b341"/>
+<text x="800" y="214.0" fill="#e3b341" font-size="12">Extraction/JSON</text>
+<rect x="786" y="204" width="0" height="0"/>
+</svg>
