@@ -229,7 +229,7 @@ docker run -d --name aeon-vllm \
         --enable-chunked-prefill \
         --enable-prefix-caching \
         --mamba-block-size 256 \
-        --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":4}' \
+        --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":12}' \
         --trust-remote-code
 ```
 
