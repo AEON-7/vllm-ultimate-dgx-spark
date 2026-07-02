@@ -72,6 +72,11 @@ RUN pip install --no-cache-dir \
     (flashinfer download-cubin 2>&1 | tail -3 || echo "[WARN] cubin download failed; runtime fallback") && \
     python3 -c "import flashinfer; print('flashinfer:', flashinfer.__version__)"
 
+# xgrammar >= 0.2.1 (v0.24.0 floor; base image ships older — tool-choice requests
+# 500 with ImportError: normalize_tool_choice without this. Found in prod 2026-07-02.)
+RUN pip install --no-cache-dir "xgrammar>=0.2.1,<1.0.0" 2>&1 | tail -2 && \
+    python3 -c "from xgrammar import normalize_tool_choice; print('xgrammar: normalize_tool_choice OK')"
+
 RUN pip install --no-cache-dir "scipy>=1.11" 2>&1 | tail -3 && \
     pip install --no-cache-dir --no-deps \
       "turboquant @ git+https://github.com/AEON-7/turboquant.git@fix/cuda-graph-safe-qjl-powers" \
