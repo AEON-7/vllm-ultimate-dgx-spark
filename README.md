@@ -1,12 +1,14 @@
 # AEON vLLM Ultimate — DGX Spark / Blackwell
 
 [![docker](https://img.shields.io/badge/ghcr.io-aeon--7%2Faeon--vllm--ultimate-blue?logo=docker)](https://ghcr.io/aeon-7/aeon-vllm-ultimate)
-[![vLLM](https://img.shields.io/badge/vLLM-0.23.0%2Bsm__121a.aeon-orange)](https://github.com/vllm-project/vllm)
+[![vLLM](https://img.shields.io/badge/vLLM-0.24.0%2Bsm__121a.aeon-orange)](https://github.com/vllm-project/vllm)
 [![sm_121a](https://img.shields.io/badge/sm__121a-DGX%20Spark-green)](https://www.nvidia.com/en-us/data-center/dgx-spark/)
 
 **One container, the whole fleet.** A single image — `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` — serves every AEON model on **NVIDIA DGX Spark (GB10, sm_121a)** and other consumer-Blackwell GPUs (RTX 50 series): **Gemma-4-26B-A4B**, **Qwen3.6-27B**, and **Qwen3.6-35B-A3B** all run on the same build, with DFlash speculative decoding, NVFP4 weights, NVFP4/FP8 KV cache, and the OpenAI-compatible gateway intact.
 
-Built on **vLLM v0.23.0 compiled from source for sm_121a**, merged with the AEON speculative-decoding stack: Triton software **NVFP4 KV cache** (PR #44389) + **DFlash SWA / high-concurrency / prefix-cache fixes** (PR #40898, #41703, #43982-port) + the **AEON DGX Spark runtime patches** + **TurboQuant** + **DFlash speculative decoding**.
+Built on **vLLM v0.24.0 compiled from source for sm_121a**, merged with the AEON speculative-decoding stack: Triton software **NVFP4 KV cache** (PR #44389) + **DFlash SWA / high-concurrency / prefix-cache fixes** (PR #40898, #41703, #43982-port) + the **AEON DGX Spark runtime patches** + **TurboQuant** + **DFlash speculative decoding**.
+
+> 🆕 **2026-07-02 — `:latest` is now the v0.24.0 sm_121a build (`:2026-07-01-v0.24.0`).** Rebuilt from source on vLLM v0.24.0 as a 3-way merge that preserves the AEON spec-decode tree. Still carries the three open upstream PRs (#44389 NVFP4-KV, #40898 DFlash SWA, #41703 prefix-cache corruption — all re-verified still unmerged), now **bakes the runtime patches into the source** (DFlash block-table unpad, spec-decode cudagraph alignment / open twin PR #46324), and adds three post-tag fixes: the **UMA negative-cudagraph-estimate clamp** (port of open PR #46932 — negative estimates on unified-memory GPUs silently inflated the KV budget), the **tied-embedding fix for ModelOpt checkpoints** (cherry-pick of merged-post-tag PR #45544 — without it every tied Gemma-4 crashes at load), and a **`use_mm_prefix` signature fix** for the carried NVFP4-KV backend overrides. New in the v0.24.0 base for Spark users: DFlash on the FlashInfer backend (#43081, non-causal prefill), UMA memory-pressure release during weight loading (#45179), `--moe-backend`/`--linear-backend` selection incl. the SM12x `flashinfer_b12x` CuteDSL backends, Dynamic SD per-batch-size draft lengths (#32374), async scheduling default-on, FlashInfer 0.6.12, pinned transformers 5.12.1 (replaces git-HEAD). ⚠️ **Breaking:** v0.24.0 removed `VLLM_NVFP4_GEMM_BACKEND` and the `VLLM_USE_FLASHINFER_MOE_*` env vars — use `--linear-backend flashinfer_cutlass` / `--moe-backend cutlass` instead (recipes below updated). Validated on the full fleet before push: 35B A/B at throughput parity with v0.23.0, DFlash concurrency clean through c=64, Triton NVFP4-KV boot + generation, 26B voice stack healthy (DFlash pos0 acceptance 60–86%). Rollback tag: `:2026-06-18-v0.23.0-dflashfix`.
 
 > 🆕 **2026-06-18 — `:latest` is now the v0.23.0 sm_121a build (`:2026-06-18-v0.23.0-dflashfix`).** Rebuilt from source on vLLM v0.23.0 as a 3-way merge that preserves the AEON spec-decode tree, and adds the **DFlash high-concurrency fix** (port of upstream PR #43982): the drafter previously **crashed at ≥32 concurrent requests** under speculative decoding (padded-vs-unpadded KV block-table shape mismatch) and now scales cleanly to **c=64**. Carries the still-open PR #44389 (NVFP4-KV), #40898 (DFlash SWA), #41703 (prefix-cache corruption). See [What we fixed for the DGX Spark](#what-we-fixed-for-the-dgx-spark) and the [v0.23.0 fleet benchmarks](#v0230-fleet-benchmarks--one-image-three-models). Rollback tag: `:2026-06-11-pr41703`.
 
@@ -332,10 +334,11 @@ Mean acceptance length now lands in z-lab's published 6.1–8.6 range. KV at thi
 docker run -d --name gemma26b --gpus all --ipc=host --net=host --shm-size=16g \
   -v /models/Gemma-4-26B-A4B-it-Uncensored-NVFP4:/model:ro \
   -v /models/gemma-4-26B-A4B-it-DFlash:/drafter:ro \
-  -e VLLM_NVFP4_GEMM_BACKEND=flashinfer-cutlass -e TORCH_CUDA_ARCH_LIST=12.1a \
+  -e TORCH_CUDA_ARCH_LIST=12.1a \
   --entrypoint bash ghcr.io/aeon-7/aeon-vllm-ultimate:latest -lc 'exec vllm serve /model \
     --quantization compressed-tensors --trust-remote-code \
     --attention-backend triton_attn \
+    --linear-backend flashinfer_cutlass \
     --max-model-len 184320 --max-num-seqs 32 --max-num-batched-tokens 32768 \
     --gpu-memory-utilization 0.68 --enable-chunked-prefill --enable-prefix-caching \
     --enable-auto-tool-choice --tool-call-parser gemma4 --reasoning-parser gemma4 \

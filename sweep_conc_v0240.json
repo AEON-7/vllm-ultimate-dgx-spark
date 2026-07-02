@@ -1,0 +1,26 @@
+{
+ "c16": {
+  "ok": 16,
+  "errors": [],
+  "wall_secs": 40.3,
+  "aggregate_tps": 79.4,
+  "median_stream_tps": 5.1,
+  "engine_alive_after": true
+ },
+ "c32": {
+  "ok": 32,
+  "errors": [],
+  "wall_secs": 10.5,
+  "aggregate_tps": 610.7,
+  "median_stream_tps": 20.5,
+  "engine_alive_after": true
+ },
+ "c64": {
+  "ok": 64,
+  "errors": [],
+  "wall_secs": 17.4,
+  "aggregate_tps": 736.4,
+  "median_stream_tps": 12.4,
+  "engine_alive_after": true
+ }
+}

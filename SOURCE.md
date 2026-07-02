@@ -20,6 +20,44 @@ cd ..
 
 The full source is not vendored in this repo (~140 MB) — only the patches, Dockerfile, humming-stub, verify script, bench tooling, and bench artifacts.
 
+## 2026-07-02 — v0.24.0 rebuild (`:2026-07-01-v0.24.0` = `:latest`)
+
+- vLLM tree: `aeon-v0.24.0` branch = 3-way merge of tag `v0.24.0` (ee0da84ab) into
+  `aeon-dflash-fix` (the v0.23.0-based AEON tree). 11 conflicted files, all in the
+  carried #44389 (triton_attn/unified-attention NVFP4-KV) and #40898/#41703
+  (runner/scheduler/warmup) footprints; resolutions integrate BOTH sides (all AEON
+  NVFP4/DFlash machinery + upstream's non-causal Triton, causal bool|Tensor plumbing,
+  fused multi-group staged block-table writes).
+- Former runtime patches now COMMITTED IN SOURCE (patch scripts retired):
+  - `dflash-blocktable-unpad` — `[: cad.num_reqs]` slice in `_get_dflash_block_table`
+    (port of merged PR #43982, which only fixed the gemma4-MTP proposer).
+  - `cudagraph_align_spec_decode_all_modes` — widen spec-decode capture-size alignment
+    beyond `decode_mode()==FULL` (open upstream twin: PR #46324).
+- `patch_cuda_optional_import` DROPPED: the v0.24.0 stable-ABI migration arch-gates the
+  formerly ungated sm_100-only kernel registrations; replaced by a build-time dlopen
+  smoke test against the CUDA driver stub (catches regressions at build, not serve).
+- Post-tag fixes carried:
+  - Cherry-pick `ad28d605e` (merged PR #45544): default `tie_weights` to weight sharing —
+    without it every tied-embedding ModelOpt checkpoint (all Gemma-4) crashes at load
+    with `NotImplementedError`.
+  - Port of open PR #46932: clamp cudagraph memory estimates to >= 0 on unified-memory
+    GPUs (GB10 issue #44740 — negative estimates inflate the KV budget and OOM).
+  - `use_mm_prefix` added to the carried `supports_combination` overrides in
+    `triton_attn.py`/`flashinfer.py` (upstream widened the base signature; the stale
+    overrides crashed backend validation with a TypeError at engine start).
+- Dependency changes: FlashInfer 0.6.8.post1 → **0.6.12** (v0.24.0 pin; 0.24 lazy-imports
+  `flashinfer.fused_moe` b12x symbols absent from 0.6.8), transformers git-HEAD →
+  **pinned 5.12.1** (first stable release covering the whole fleet; smoke-tested against
+  every fleet architecture before the build), GCC 12 host compiler (#44923 C++20).
+- Validation before push (all on GB10): Ornith-35B (GDN hybrid MoE NVFP4 + DFlash
+  multi-KV-group) A/B vs the v0.23.0 image at parity (c=1: 81.6 vs 82.7 tok/s; c=12:
+  441.8 vs 457.9 agg — within run-to-run variance); DFlash concurrency sweep clean at
+  c=16/32/64 (no block-table crash); Gemma-4-12B K4-MIXED with `--kv-cache-dtype nvfp4`
+  on the Triton backend boots + generates; Gemma-4-26B-A4B voice stack (triton_attn +
+  DFlash flash_attn drafter n=10 + `--linear-backend flashinfer_cutlass`) healthy,
+  pos0 acceptance 60–86%. Sweep artifacts: `sweep_prodcfg_v0240.json`,
+  `sweep_conc_v0240.json`, `sweep_v0230_ab.json`.
+
 ## 2026-06-11 — PR #40898 + #41703 overlay (`:2026-06-11-pr41703` = `:latest`)
 
 DFlash drafter fixes merged ahead of upstream (both PRs open at merge time; the z-lab
