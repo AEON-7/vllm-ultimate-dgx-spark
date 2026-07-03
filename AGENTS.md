@@ -116,9 +116,9 @@ docker run -d --name aeon-vllm \
         --quantization modelopt \
         --kv-cache-dtype fp8_e4m3 \
         --attention-backend TRITON_ATTN \
-        --max-model-len 24576 \
-        --max-num-seqs 8 \
-        --max-num-batched-tokens 8192 \
+        --max-model-len 229376 \
+        --max-num-seqs 16 \
+        --max-num-batched-tokens 32768 \
         --gpu-memory-utilization 0.60 \
         --enable-chunked-prefill \
         --enable-prefix-caching \
@@ -136,6 +136,7 @@ docker run -d --name aeon-vllm \
 - `--kv-cache-dtype fp8_e4m3` — DFlash is **non-causal** and has no NVFP4/FP8-vs-non-causal KV kernel partner that *also* supports NVFP4 on sm_121a; FP8 KV is the working DFlash pairing on this build. NVFP4 KV (`--kv-cache-dtype nvfp4`, PR #44389) pairs only with **causal** speculators (`mtp`, `qwen3_5_mtp`, `eagle3`, `ngram`, `ngram_gpu`) — see the MTP variant.
 - `--speculative-config '{"method":"dflash",...}'` — `method: "dflash"` is the native vLLM speculator (not `"speculators"`).
 - `--attention-backend TRITON_ATTN` and `"attention_backend":"TRITON_ATTN"` inside the DFlash JSON are both required for this Qwen3.6 DFlash path. vLLM does not inherit target attention-backend settings into speculative drafters.
+- `--max-model-len 229376` gives one near-full-context session while retaining KV headroom for output and smaller concurrent agents; `--max-num-seqs 16` and `--max-num-batched-tokens 32768` keep agent/gateway bursts usable.
 - Leave `--mamba-block-size` unset. vLLM now derives the correct cache geometry for Qwen3.6's hybrid GatedDeltaNet + attention stack.
 - `--gpu-memory-utilization 0.60` — sidecar-safe default when Qwen3-ASR and Qwen3-TTS share the Spark. **Never exceed 0.88 on Spark.** GB10's unified LPDDR5X pool is shared CPU+GPU, so anything above ~0.88 page-thrashes.
 - If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir. If you instead use `huggingface-cli download` and it stores symlinks into the HF cache `blobs/` dir, vLLM's bind-mount can't follow them — pass `--local-dir-use-symlinks=False` or `cp -L $HF_CACHE/snapshots/<hash>/* /models/Qwen3.6-27B-DFlash-drafter/` so the files are real.

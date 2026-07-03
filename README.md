@@ -49,9 +49,9 @@ docker run -d --name aeon-vllm \
         --quantization modelopt \
         --kv-cache-dtype fp8_e4m3 \
         --attention-backend TRITON_ATTN \
-        --max-model-len 24576 \
-        --max-num-seqs 8 \
-        --max-num-batched-tokens 8192 \
+        --max-model-len 229376 \
+        --max-num-seqs 16 \
+        --max-num-batched-tokens 32768 \
         --gpu-memory-utilization 0.60 \
         --enable-chunked-prefill \
         --enable-prefix-caching \
@@ -70,7 +70,7 @@ curl -s http://localhost:8000/v1/chat/completions \
   | jq .choices[0].message.content
 ```
 
-> **Why these flags:** `--quantization modelopt` matches the recommended Multimodal-NVFP4-MTP body; `--kv-cache-dtype fp8_e4m3` is the stable DFlash pairing on GB10; `--gpu-memory-utilization 0.60` leaves room for Qwen3-ASR/Qwen3-TTS sidecars on the same Spark; and `--attention-backend TRITON_ATTN` must be set both on the target model and inside the DFlash JSON because vLLM does not inherit target attention-backend settings into speculative drafters. Leave `--mamba-block-size` unset and let vLLM derive the hybrid GDN geometry. If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir so vLLM sees real weights.
+> **Why these flags:** `--quantization modelopt` matches the recommended Multimodal-NVFP4-MTP body; `--kv-cache-dtype fp8_e4m3` is the stable DFlash pairing on GB10; `--gpu-memory-utilization 0.60` leaves room for Qwen3-ASR/Qwen3-TTS sidecars on the same Spark; and `--attention-backend TRITON_ATTN` must be set both on the target model and inside the DFlash JSON because vLLM does not inherit target attention-backend settings into speculative drafters. `--max-model-len 229376` gives one near-full-context session while still leaving KV headroom for output and smaller concurrent agents; `--max-num-seqs 16` and `--max-num-batched-tokens 32768` keep the agent/gateway burst path usable. Leave `--mamba-block-size` unset and let vLLM derive the hybrid GDN geometry. If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir so vLLM sees real weights.
 
 ## What's inside
 
@@ -260,7 +260,7 @@ This is the recipe in the [top Quickstart](#quickstart-dgx-spark-copy-paste) —
 - `--kv-cache-dtype fp8_e4m3` — DFlash is non-causal and incompatible with NVFP4 KV on Spark today (see Recipe B for NVFP4 KV with MTP).
 - `--speculative-config '{"method":"dflash",...}'` — `method: "dflash"` is the native vLLM speculator (not `"speculators"`).
 - `--attention-backend TRITON_ATTN` plus `"attention_backend":"TRITON_ATTN"` inside the DFlash JSON — vLLM does not inherit target attention-backend settings into speculative drafters.
-- `--max-num-batched-tokens 8192` — must accommodate `num_speculative_tokens × max_num_seqs` plus headroom (vLLM warns if too low).
+- `--max-num-batched-tokens 32768` — must accommodate long agent startup prompts plus `num_speculative_tokens × max_num_seqs` headroom.
 - Leave `--mamba-block-size` unset — vLLM now derives the hybrid GatedDeltaNet + attention cache geometry correctly.
 - `--gpu-memory-utilization` — **keep this ≤ 0.88 on DGX Spark.** The quickstart uses `0.60` so Qwen3-ASR/Qwen3-TTS sidecars can share the GPU without forcing unified-memory pressure. Raise toward `0.75-0.85` only when the LLM is the dominant workload.
 
