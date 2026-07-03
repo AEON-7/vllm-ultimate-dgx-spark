@@ -7,8 +7,8 @@ Blackwell host.
 
 > **Note**: The entire AEON fleet — **Qwen3.6-27B**, **Qwen3.6-35B-A3B**, and
 > **Gemma-4-26B-A4B** — is now unified onto this single image,
-> `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` (= `:2026-06-18-v0.23.0-dflashfix`;
-> rollback `:2026-06-11-pr41703`), served with **DFlash
+> `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` (= `:2026-07-01-v0.24.0`;
+> rollback `:2026-06-18-v0.23.0-dflashfix`), served with **DFlash
 > `num_speculative_tokens: 12`**. The old lineage (`omni-q36`, `vllm-spark-*`,
 > `aeon-gemma-4-26b-a4b-dflash`, `vllm-aeon-ultimate-*`, `vllm-dflash`) is
 > consolidated into this image — historical only. There is no longer a separate
@@ -16,7 +16,7 @@ Blackwell host.
 
 ## What this container is
 
-A from-source build of **vLLM v0.23.0** (compiled for sm_121a) that:
+A from-source build of **vLLM v0.24.0** (compiled for sm_121a) that:
 
 - Uses **PR #44389**'s Triton software NVFP4 KV cache (~3× capacity
   vs FP8 at the same memory budget — value when serving long context
@@ -51,10 +51,10 @@ A from-source build of **vLLM v0.23.0** (compiled for sm_121a) that:
 
 ```bash
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest
-# or pin the current build (vLLM 0.23.0 + DFlash high-concurrency fix)
+# or pin the current build (vLLM 0.24.0 + AEON DFlash fixes)
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-01-v0.24.0
+# previous build kept for rollback
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-18-v0.23.0-dflashfix
-# previous build (pre-v0.23.0 / pre-concurrency-fix) kept for rollback
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-11-pr41703
 ```
 
 ## Verify the image is healthy before serving
@@ -90,9 +90,9 @@ clone the body and the drafter fresh, then bind-mount both:
 ```bash
 # 1) Pull the NVFP4 body (compressed-tensors, ~26 GB) — fresh clone
 GIT_LFS_SKIP_SMUDGE=1 git clone \
-  https://huggingface.co/AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-NVFP4 \
-  /models/Qwen3.6-27B-AEON-NVFP4
-( cd /models/Qwen3.6-27B-AEON-NVFP4 && git lfs pull )
+  https://huggingface.co/AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP \
+  /models/Qwen3.6-27B-AEON-MM-MTP
+( cd /models/Qwen3.6-27B-AEON-MM-MTP && git lfs pull )
 
 # 2) Pull the DFlash drafter (z-lab 5-layer, ~3.3 GB) — fresh clone
 GIT_LFS_SKIP_SMUDGE=1 git clone \
@@ -102,40 +102,48 @@ GIT_LFS_SKIP_SMUDGE=1 git clone \
 
 # 3) Serve — DFlash drafter + FP8 KV
 docker run -d --name aeon-vllm \
+    --restart unless-stopped \
     --gpus all --ipc=host --shm-size=16g \
     --net=host \
-    -v /models/Qwen3.6-27B-AEON-NVFP4:/model:ro \
+    -e VLLM_USE_FLASHINFER_SAMPLER=1 \
+    -v /models/Qwen3.6-27B-AEON-MM-MTP:/model:ro \
     -v /models/Qwen3.6-27B-DFlash-drafter:/drafter:ro \
     --entrypoint vllm \
     ghcr.io/aeon-7/aeon-vllm-ultimate:latest \
     serve /model \
-        --served-model-name aeon \
+        --served-model-name aeon aeon-fast aeon-deep aeon-ultimate qwen36-ultimate aeon-ultimate-xs \
         --dtype auto \
-        --quantization compressed-tensors \
+        --quantization modelopt \
         --kv-cache-dtype fp8_e4m3 \
+        --attention-backend TRITON_ATTN \
         --max-model-len 24576 \
         --max-num-seqs 8 \
         --max-num-batched-tokens 8192 \
-        --gpu-memory-utilization 0.78 \
+        --gpu-memory-utilization 0.60 \
         --enable-chunked-prefill \
         --enable-prefix-caching \
-        --mamba-block-size 256 \
-        --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":12}' \
+        --generation-config vllm \
+        --reasoning-parser qwen3 \
+        --tool-call-parser qwen3_coder \
+        --enable-auto-tool-choice \
+        --mm-encoder-tp-mode data \
+        --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":12,"attention_backend":"TRITON_ATTN"}' \
         --trust-remote-code
 ```
 
 **Notes**:
-- `--quantization compressed-tensors` for `AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-NVFP4` (the DFlash-paired body, `format: nvfp4-pack-quantized`); `--quantization modelopt` for the `*-MTP-XS` variants (see the MTP variant below).
+- `--quantization modelopt` for `AEON-7/Qwen3.6-27B-AEON-Ultimate-Uncensored-Multimodal-NVFP4-MTP`. Use `--quantization compressed-tensors` only for the older `*-NVFP4` production body (`format: nvfp4-pack-quantized`).
 - `--kv-cache-dtype fp8_e4m3` — DFlash is **non-causal** and has no NVFP4/FP8-vs-non-causal KV kernel partner that *also* supports NVFP4 on sm_121a; FP8 KV is the working DFlash pairing on this build. NVFP4 KV (`--kv-cache-dtype nvfp4`, PR #44389) pairs only with **causal** speculators (`mtp`, `qwen3_5_mtp`, `eagle3`, `ngram`, `ngram_gpu`) — see the MTP variant.
 - `--speculative-config '{"method":"dflash",...}'` — `method: "dflash"` is the native vLLM speculator (not `"speculators"`).
-- `--mamba-block-size 256` is needed for Qwen3.6's hybrid GatedDeltaNet + attention stack. **Qwen3.6-35B-A3B** does *not* need it (its 8-layer drafter is all-full-attention).
-- `--gpu-memory-utilization 0.78` — **never exceed 0.88 on Spark.** vLLM v0.23.0 defaults to `0.92`, but GB10's unified LPDDR5X pool is shared CPU+GPU, so anything above ~0.88 page-thrashes.
+- `--attention-backend TRITON_ATTN` and `"attention_backend":"TRITON_ATTN"` inside the DFlash JSON are both required for this Qwen3.6 DFlash path. vLLM does not inherit target attention-backend settings into speculative drafters.
+- Leave `--mamba-block-size` unset. vLLM now derives the correct cache geometry for Qwen3.6's hybrid GatedDeltaNet + attention stack.
+- `--gpu-memory-utilization 0.60` — sidecar-safe default when Qwen3-ASR and Qwen3-TTS share the Spark. **Never exceed 0.88 on Spark.** GB10's unified LPDDR5X pool is shared CPU+GPU, so anything above ~0.88 page-thrashes.
 - If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir. If you instead use `huggingface-cli download` and it stores symlinks into the HF cache `blobs/` dir, vLLM's bind-mount can't follow them — pass `--local-dir-use-symlinks=False` or `cp -L $HF_CACHE/snapshots/<hash>/* /models/Qwen3.6-27B-DFlash-drafter/` so the files are real.
 
-> ⚠️ **`method: "dflash"`** is the correct value (not `"speculators"`). On this
-> v0.23.0 image the drafter **must** use `"attention_backend": "flash_attn"`
-> for **Gemma-4** targets (the old `flex_attention` workaround crashes at the
-> first request); for Qwen3.6 the default drafter backend works. Use
+> ⚠️ **`method: "dflash"`** is the correct value (not `"speculators"`). On the
+> v0.24.0 Qwen3.6 path, set `"attention_backend":"TRITON_ATTN"` inside the
+> speculative config because vLLM does not inherit the target backend. For
+> **Gemma-4** targets, follow the Gemma recipe's drafter backend notes. Use
 > **`--kv-cache-dtype fp8_e4m3`** — the non-causal DFlash drafter cannot pair
 > with NVFP4 KV on sm_121a today.
 >
@@ -168,8 +176,8 @@ docker run -d --name aeon-vllm \
     --quantization modelopt \
     --kv-cache-dtype nvfp4 \
     --max-model-len 32768 --max-num-seqs 8 --max-num-batched-tokens 4096 \
-    --gpu-memory-utilization 0.78 \
-    --enable-chunked-prefill --enable-prefix-caching --mamba-block-size 256 \
+    --gpu-memory-utilization 0.60 \
+    --enable-chunked-prefill --enable-prefix-caching \
     --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}' \
     --trust-remote-code
 ```
@@ -189,7 +197,7 @@ ENV VLLM_USE_TURBOQUANT=1            # turn on K8V4
 ENV TURBOQUANT_KV_BITS=4             # 4-bit K + 4-bit V
 ```
 
-Pair with `--gpu-memory-utilization 0.78` and `--max-num-seqs 12+`. See [feedback_turboquant_cuda_graph_fix.md] for why the AEON-7 fork is required.
+Pair with `--gpu-memory-utilization 0.60` when ASR/TTS sidecars share the Spark, or raise cautiously only when the LLM is the dominant GPU workload. See [feedback_turboquant_cuda_graph_fix.md] for why the AEON-7 fork is required.
 
 ## Health probes
 

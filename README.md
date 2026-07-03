@@ -35,25 +35,32 @@ GIT_LFS_SKIP_SMUDGE=1 git clone \
 
 # 4) Serve — DFlash drafter + FP8 KV (mounts body at /model, drafter at /drafter)
 docker run -d --name aeon-vllm \
+    --restart unless-stopped \
     --gpus all --ipc=host --shm-size=16g \
     --net=host \
+    -e VLLM_USE_FLASHINFER_SAMPLER=1 \
     -v /models/Qwen3.6-27B-AEON-MM-MTP:/model:ro \
     -v /models/Qwen3.6-27B-DFlash-drafter:/drafter:ro \
     --entrypoint vllm \
     ghcr.io/aeon-7/aeon-vllm-ultimate:latest \
     serve /model \
-        --served-model-name aeon \
+        --served-model-name aeon aeon-fast aeon-deep aeon-ultimate qwen36-ultimate aeon-ultimate-xs \
         --dtype auto \
         --quantization modelopt \
         --kv-cache-dtype fp8_e4m3 \
+        --attention-backend TRITON_ATTN \
         --max-model-len 24576 \
         --max-num-seqs 8 \
         --max-num-batched-tokens 8192 \
-        --gpu-memory-utilization 0.78 \
+        --gpu-memory-utilization 0.60 \
         --enable-chunked-prefill \
         --enable-prefix-caching \
-        --mamba-block-size 256 \
-        --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":12}' \
+        --generation-config vllm \
+        --reasoning-parser qwen3 \
+        --tool-call-parser qwen3_coder \
+        --enable-auto-tool-choice \
+        --mm-encoder-tp-mode data \
+        --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":12,"attention_backend":"TRITON_ATTN"}' \
         --trust-remote-code
 
 # 5) Smoke test
@@ -63,7 +70,7 @@ curl -s http://localhost:8000/v1/chat/completions \
   | jq .choices[0].message.content
 ```
 
-> **Why these flags:** `--quantization compressed-tensors` (the NVFP4 body is `nvfp4-pack-quantized`, not modelopt); `--kv-cache-dtype fp8_e4m3` (DFlash is non-causal and can't pair with NVFP4 KV on sm_121a today — see [Recipe A](#recipe-a--dgx-spark-dflash-drafter--fp8-kv-recommended-for-daily-driver)); `--gpu-memory-utilization 0.78` (**never exceed 0.88 on Spark** — unified LPDDR5X thrashes above that); `--mamba-block-size 256` for Qwen3.6's hybrid GatedDeltaNet+attention stack. If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir so vLLM sees real weights.
+> **Why these flags:** `--quantization modelopt` matches the recommended Multimodal-NVFP4-MTP body; `--kv-cache-dtype fp8_e4m3` is the stable DFlash pairing on GB10; `--gpu-memory-utilization 0.60` leaves room for Qwen3-ASR/Qwen3-TTS sidecars on the same Spark; and `--attention-backend TRITON_ATTN` must be set both on the target model and inside the DFlash JSON because vLLM does not inherit target attention-backend settings into speculative drafters. Leave `--mamba-block-size` unset and let vLLM derive the hybrid GDN geometry. If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir so vLLM sees real weights.
 
 ## What's inside
 
@@ -208,7 +215,7 @@ Both PRs are **open upstream but required** for correct DFlash operation (the z-
 | **Drafter sliding-window ignored** — SWA drafters (e.g. the Gemma-4-26B drafter: 4 of 5 layers SWA-2048) ran all layers as full attention | Long-context requests (>2048 tok history) got ~0% acceptance *per-request* even on a healthy server | #40898 adds DFlash SWA support (per-layer sliding-window wiring + causal SWA drafting metadata) |
 | **Missing Gemma-4 adapter pieces** — no sqrt(hidden) embedding normalizer or final-logit softcapping in the draft path; `flash_attn` drafter rejected on multimodal Gemma targets | Depressed acceptance ceiling (MAL 4.4–6.6 vs z-lab's published 6.1–8.6); forced onto `flex_attention` | #41703 adds both + `use_mm_prefix=False`, enabling the upstream-tested **`flash_attn` drafter** on Gemma-4 |
 
-⚠️ **Recipe change on this image: the DFlash drafter must use `"attention_backend": "flash_attn"`.** The old `flex_attention` workaround crashes at the first request (`key_cache.view(...)` on a non-contiguous tensor — the PR's KV-sharing machinery is only exercised with flash_attn upstream). With these fixes, `--enable-prefix-caching` is **safe again with DFlash** — soak-validated under production fleet traffic.
+⚠️ **Recipe note:** Qwen3.6 DFlash on the v0.24.0 Spark image uses `"attention_backend":"TRITON_ATTN"` in the speculative config, matching the top quickstart. Gemma-4 DFlash recipes remain a separate path and may specify `"attention_backend":"flash_attn"` where called out. With these fixes, `--enable-prefix-caching` is **safe again with DFlash** — soak-validated under production fleet traffic.
 
 ### 🧠 TurboQuant K8V4 — 4-bit KV cache compression
 [0xSero/turboquant](https://github.com/0xSero/turboquant) with the AEON-7 fork applying our [`fix/cuda-graph-safe-qjl-powers`](https://github.com/AEON-7/turboquant/tree/fix/cuda-graph-safe-qjl-powers) patch — caches the `[1, 2, 4, 8, 16, 32, 64, 128]` constant per-device once at module load instead of re-allocating per call. **Without this fix, TurboQuant crashes at boot during CUDA graph capture**; the lazy workaround `--enforce-eager` costs ~30% throughput.
@@ -252,9 +259,10 @@ This is the recipe in the [top Quickstart](#quickstart-dgx-spark-copy-paste) —
 - `--quantization modelopt` — the recommended **Multimodal-NVFP4-MTP** body is a modelopt NVFP4 checkpoint. (The older `-NVFP4` production body is compressed-tensors `format: nvfp4-pack-quantized` → use `--quantization compressed-tensors` for that one.)
 - `--kv-cache-dtype fp8_e4m3` — DFlash is non-causal and incompatible with NVFP4 KV on Spark today (see Recipe B for NVFP4 KV with MTP).
 - `--speculative-config '{"method":"dflash",...}'` — `method: "dflash"` is the native vLLM speculator (not `"speculators"`).
+- `--attention-backend TRITON_ATTN` plus `"attention_backend":"TRITON_ATTN"` inside the DFlash JSON — vLLM does not inherit target attention-backend settings into speculative drafters.
 - `--max-num-batched-tokens 8192` — must accommodate `num_speculative_tokens × max_num_seqs` plus headroom (vLLM warns if too low).
-- `--mamba-block-size 256` — needed for Qwen3.6's hybrid GatedDeltaNet + attention stack.
-- `--gpu-memory-utilization` — **keep this ≤ 0.88 on DGX Spark.** vLLM v0.23.0 defaults to `0.92`, but GB10's unified LPDDR5X pool is shared between CPU and GPU, so anything above ~0.88 page-thrashes. The recipes here use `0.78`/`0.68`; never set it higher than `0.88`.
+- Leave `--mamba-block-size` unset — vLLM now derives the hybrid GatedDeltaNet + attention cache geometry correctly.
+- `--gpu-memory-utilization` — **keep this ≤ 0.88 on DGX Spark.** The quickstart uses `0.60` so Qwen3-ASR/Qwen3-TTS sidecars can share the GPU without forcing unified-memory pressure. Raise toward `0.75-0.85` only when the LLM is the dominant workload.
 
 > 💡 **Drafter materialization note.** vLLM bind-mounts the drafter dir but can't follow symlinks that point **outside** the mount (e.g. into the HF cache `blobs/` dir). After `huggingface-cli download`, either pass `--local-dir-use-symlinks=False` *or* `cp -L $HF_CACHE/snapshots/<hash>/* /models/Qwen3.6-27B-DFlash-drafter/` so the files are real, not symlinks. This pitfall cost us 4 startup failures.
 
@@ -274,8 +282,8 @@ docker run -d --name aeon-vllm \
         --kv-cache-dtype nvfp4 \
         --speculative-config '{"method":"qwen3_5_mtp","num_speculative_tokens":3}' \
         --max-model-len 32768 --max-num-seqs 8 \
-        --gpu-memory-utilization 0.78 \
-        --enable-chunked-prefill --enable-prefix-caching --mamba-block-size 256 \
+        --gpu-memory-utilization 0.60 \
+        --enable-chunked-prefill --enable-prefix-caching \
         --trust-remote-code
 ```
 
@@ -348,10 +356,12 @@ docker run -d --name gemma26b --gpus all --ipc=host --net=host --shm-size=16g \
 
 ### Qwen3.6 benchmarks (image `2026-06-04` era)
 
-Measured on **DGX Spark GB10 (sm_121a)** with `--max-num-seqs 8
---max-model-len 8192 --gpu-memory-utilization 0.78 --enable-chunked-prefill
---enable-prefix-caching --mamba-block-size 256
---quantization {compressed-tensors|modelopt}`.
+Measured on **DGX Spark GB10 (sm_121a)** with the historical 2026-06-04-era
+recipe: `--max-num-seqs 8 --max-model-len 8192 --gpu-memory-utilization 0.78
+--enable-chunked-prefill --enable-prefix-caching --mamba-block-size 256
+--quantization {compressed-tensors|modelopt}`. Current v0.24 quickstarts use
+`--gpu-memory-utilization 0.60` for ASR/TTS sidecar headroom and leave
+`--mamba-block-size` unset.
 
 ### 🏆 Production-style: greedy + n_spec=15, by prompt category
 
