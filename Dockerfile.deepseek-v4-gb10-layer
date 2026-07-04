@@ -1,0 +1,64 @@
+# aeon-vllm-ultimate + DeepSeek-V4-Flash enablement for DGX Spark (GB10 / sm_121a).
+#
+# The 0.24 base already ships the native vllm/models/deepseek_v4 package, but on GB10 its
+# fp8 compute path dies on a cascade of gaps (all validated on 2x DGX Spark, TP2 over RoCE):
+#   1. nvidia-cutlass-dsl 4.6.0 removed cute.core.ThrMma, which the base's own
+#      deepseek_v4/nvidia/ops/fused_indexer_q_cutedsl.py still annotates -> AttributeError
+#      on ANY DeepSeek-V4 load (even on datacenter GPUs). Pin 4.5.2.
+#   2. The vendored DeepGEMM has no sm_12x kernels (fp8_einsum / tf32_hc_prenorm_gemm /
+#      paged mqa logits all assert "Unsupported architecture"). Install DeepGEMM nv_dev
+#      (deepseek-ai/DeepGEMM#324: native sm120 CuTeDSL kernels) into site-packages, which
+#      vllm.utils.deep_gemm prefers over the vendored copy.
+#   3. flashinfer 0.6.12 lacks the swa_topk_lens / extra_sparse_* sparse-MLA decode API that
+#      the base's deepseek_v4/nvidia/flashinfer_sparse.py calls. Upgrade to 0.6.14.
+#   4. Three thin .py overlays (see overlay-deepseek-v4-gb10/):
+#      - o_proj.py: nv_dev fp8_einsum expects unpacked fp32 scales + (h,d,r) weights; adapt
+#        the SM100 packed-ue8m0 layout on sm12x.
+#      - sparse_attn_indexer.py: cooperative_topk's cluster launch fails on GB10
+#        ("invalid argument"); gate sm12x to the existing persistent_topk path.
+#      - scaled_mm/triton.py: cast E8M0 scale tensors to fp32 before the triton block-scaled
+#        MM (triton's JIT has no float8_e8m0fnu mapping; the cast is exact).
+#
+# Serve notes (2-node TP2): --moe-backend marlin --linear-backend triton,
+# VLLM_DEEP_GEMM_WARMUP=skip (the linear warmup pass feeds raw e8m0 scales to fp8_gemm_nt),
+# cudagraph_mode PIECEWISE (FULL decode graphs hang on GB10, cf. vllm#40969).
+FROM ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-01-v0.24.0
+LABEL aeon.layer="deepseek-v4-gb10" \
+      aeon.base="2026-07-01-v0.24.0" \
+      aeon.fixes="cutlass-dsl-4.5.2-thrmma,deepgemm-nv_dev-sm120,flashinfer-0.6.14-sparse-mla,o_proj-sm12x-adapter,persistent-topk-sm12x,triton-e8m0-upcast"
+
+# (1) cutlass-dsl: 4.6.0 dropped cute.core.ThrMma which the base's cutedsl ops use.
+RUN pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-core nvidia-cutlass-dsl-libs-cu12 || true
+RUN pip install --no-cache-dir nvidia-cutlass-dsl==4.5.2 && \
+    python3 -c "import cutlass.cute.core as c; assert hasattr(c, 'ThrMma'); print('cutlass-dsl 4.5.2: ThrMma OK')"
+
+# (2) DeepGEMM nv_dev (sm120 kernels; deepseek-ai/DeepGEMM#324). Pinned commit.
+ENV TORCH_CUDA_ARCH_LIST=12.1a
+RUN git clone https://github.com/deepseek-ai/DeepGEMM.git /opt/deepgemm && \
+    cd /opt/deepgemm && git checkout a6b593d && git submodule update --init --recursive && \
+    MAX_JOBS=8 pip install --no-build-isolation --no-deps -v . 2>&1 | tail -4
+# import check in its own RUN: cwd must not be /opt/deepgemm, or python imports the source tree
+# instead of site-packages ("cannot import name '_C' ... circular import").
+RUN cd / && python3 -c "import deep_gemm; syms=[s for s in ('fp8_einsum','tf32_hc_prenorm_gemm','get_paged_mqa_logits_metadata','fp8_paged_mqa_logits') if hasattr(deep_gemm, s)]; assert len(syms) >= 3, syms; print('deep_gemm nv_dev OK:', syms)"
+
+# (3) flashinfer 0.6.14 (swa_topk_lens sparse-MLA API the base's flashinfer_sparse.py targets).
+RUN pip install --no-cache-dir --no-deps \
+      https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.14/flashinfer_python-0.6.14-py3-none-any.whl \
+      https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.14/flashinfer_cubin-0.6.14-py3-none-any.whl \
+      https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.14/flashinfer_jit_cache-0.6.14+cu130-cp39-abi3-manylinux_2_28_aarch64.whl && \
+    python3 -c "import flashinfer, inspect; from flashinfer.mla import _core; assert 'swa_topk_lens' in inspect.signature(_core.trtllm_batch_decode_sparse_mla_dsv4).parameters; print('flashinfer', flashinfer.__version__, 'sparse-MLA API OK')"
+
+# (4) thin .py overlays (sm12x-gated; no behavior change on sm90/sm100).
+COPY overlay-deepseek-v4-gb10/vllm/ /usr/local/lib/python3.12/site-packages/vllm/
+
+# Smoke: the exact import that breaks on the unpatched base.
+RUN python3 -c "\
+import vllm.models.deepseek_v4 as m; \
+import vllm.models.deepseek_v4.nvidia.ops.o_proj as o; \
+import inspect; src = inspect.getsource(o); \
+assert '_sm12x' in src, 'o_proj sm12x adapter missing'; \
+import vllm.model_executor.layers.sparse_attn_indexer as s; \
+ssrc = inspect.getsource(s); \
+assert 'has_device_capability(120)' in ssrc, 'persistent_topk gate missing'; \
+print('deepseek-v4-gb10 overlay smoke: OK')"
+ENTRYPOINT ["/bin/bash"]
