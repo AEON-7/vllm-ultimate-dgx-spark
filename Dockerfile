@@ -72,6 +72,20 @@ RUN pip install --no-cache-dir \
     (flashinfer download-cubin 2>&1 | tail -3 || echo "[WARN] cubin download failed; runtime fallback") && \
     python3 -c "import flashinfer; print('flashinfer:', flashinfer.__version__)"
 
+# apache-tvm-ffi >= 0.1.10 is REQUIRED for the flashinfer_b12x CuteDSL MoE kernel on GB10.
+# nvidia-cutlass-dsl 4.6.0 (SM12x JIT) calls tvm_ffi ...make_kwargs_wrapper(map_dataclass_to_tuple=...),
+# a parameter added in tvm-ffi 0.1.10. The base image ships 0.1.9, so --moe-backend flashinfer_b12x
+# loads the model but CRASHES at the warmup forward pass with:
+#   TypeError: make_kwargs_wrapper() got an unexpected keyword argument 'map_dataclass_to_tuple'
+#   (flashinfer/fused_moe/cute_dsl/blackwell_sm12x/moe_dispatch.py -> tvm_ffi.utils.kwargs_wrapper)
+# The FlashInfer 0.6.12 bump above enabled the b12x symbols but left tvm-ffi under-pinned; this pairs it.
+# Verified on GB10 (sm_121a): with 0.1.12, `--moe-backend flashinfer_b12x` boots to /health and serves.
+RUN pip install --no-cache-dir "apache-tvm-ffi==0.1.12" 2>&1 | tail -2 && \
+    python3 -c "import inspect, tvm_ffi, tvm_ffi.utils.kwargs_wrapper as k; \
+assert 'map_dataclass_to_tuple' in str(inspect.signature(k.make_kwargs_wrapper)), \
+'apache-tvm-ffi too old for flashinfer_b12x CuteDSL MoE'; \
+print('apache-tvm-ffi:', tvm_ffi.__version__, '(b12x kwargs_wrapper OK)')"
+
 # xgrammar >= 0.2.1 (v0.24.0 floor; base image ships older — tool-choice requests
 # 500 with ImportError: normalize_tool_choice without this. Found in prod 2026-07-02.)
 RUN pip install --no-cache-dir "xgrammar>=0.2.1,<1.0.0" 2>&1 | tail -2 && \
