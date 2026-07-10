@@ -45,6 +45,13 @@ The full source is not vendored in this repo (~140 MB) — only the patches, Doc
   - `use_mm_prefix` added to the carried `supports_combination` overrides in
     `triton_attn.py`/`flashinfer.py` (upstream widened the base signature; the stale
     overrides crashed backend validation with a TypeError at engine start).
+- Hikari07jp / DSpark Qwen3.6 DFlash compatibility overlay added in
+  `overlays/hikari-dflash/`: ports the Markov transition-bias head
+  (`markov_head.markov_w1.weight` / `markov_head.markov_w2.weight`) into the current
+  `qwen3_dflash.py` while preserving the v0.24.0 proposer, multi-KV-cache-group, and
+  cudagraph paths. Smoke-validated on DGX Spark with
+  `Hikari07jp/DSpark-Qwen3.6-27B-AEON-draft`: model loads, CUDA graphs capture, and a
+  real `/v1/chat/completions` decode returns HTTP 200.
 - Dependency changes: FlashInfer 0.6.8.post1 → **0.6.12** (v0.24.0 pin; 0.24 lazy-imports
   `flashinfer.fused_moe` b12x symbols absent from 0.6.8), transformers git-HEAD →
   **pinned 5.12.1** (first stable release covering the whole fleet; smoke-tested against
@@ -95,7 +102,7 @@ docker build -t aeon-vllm-ultimate:latest .
 | `TORCH_CUDA_ARCH_LIST` | `12.1a` | GB10 / sm_121a target. |
 | `ENABLE_NVFP4_SM100` | `0` | Skips SM100-only NVFP4 kernels that fail to compile on SM121. |
 
-The Dockerfile installs the CUDA 13.0 dev headers (`cuda-nvrtc-dev-13-0`, `libcusparse/cublas/cusolver/cufft/curand/nvjitlink-dev-13-0`), builds vLLM from the COPY'd `vllm-src/`, applies the three idempotent AEON sm_121a patches (`patch_cuda_optional_import`, `patch_kv_cache_utils`, `patch_cudagraph_align`), then layers TurboQuant (AEON-7 fork) + transformers HEAD + the `humming-stub`.
+The Dockerfile installs the CUDA 13.0 dev headers (`cuda-nvrtc-dev-13-0`, `libcusparse/cublas/cusolver/cufft/curand/nvjitlink-dev-13-0`), builds vLLM from the COPY'd `vllm-src/`, copies the Hikari DFlash Markov compatibility overlay into the installed package, then layers FlashInfer 0.6.12, TurboQuant (AEON-7 fork), pinned transformers, xgrammar, and the `humming-stub`.
 
 **Build troubleshooting:**
 

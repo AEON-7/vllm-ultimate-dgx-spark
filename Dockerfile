@@ -14,6 +14,9 @@
 # - transformers pinned 5.12.1 (first stable release covering the whole fleet; replaces git-HEAD).
 # - GCC 12 for C++20 (upstream #44923); TurboQuant AEON-7 fork kept (retire after stock K8V4 test);
 #   humming-stub unchanged (v0.24.0 lazy facade verified compatible).
+# - Hikari07jp/DSpark Qwen3.6 DFlash drafter compatibility overlay:
+#   ports the Markov transition head into the current qwen3_dflash model while keeping the newer
+#   v0.24.0 proposer/KV-cache-group path intact.
 
 FROM ghcr.io/aeon-7/aeon-gemma-4-26b-a4b-dflash:latest AS base
 
@@ -63,6 +66,14 @@ WORKDIR /build/vllm-src
 RUN pip install --no-deps -v . 2>&1 | tee /tmp/vllm-install.log | tail -120 && \
     echo "[vllm pip install] exit=$?"
 
+COPY overlays/hikari-dflash/qwen3_dflash.py \
+     /usr/local/lib/python3.12/site-packages/vllm/model_executor/models/qwen3_dflash.py
+COPY overlays/hikari-dflash/llm_base_proposer.py \
+     /usr/local/lib/python3.12/site-packages/vllm/v1/spec_decode/llm_base_proposer.py
+RUN python3 -m py_compile \
+      /usr/local/lib/python3.12/site-packages/vllm/model_executor/models/qwen3_dflash.py \
+      /usr/local/lib/python3.12/site-packages/vllm/v1/spec_decode/llm_base_proposer.py
+
 # FlashInfer 0.6.12 to match the v0.24.0 pin (0.6.8.post1 lacks fused_moe b12x symbols)
 RUN pip install --no-cache-dir \
       "flashinfer-python==0.6.12" "flashinfer-cubin==0.6.12" 2>&1 | tail -3 && \
@@ -110,6 +121,9 @@ from vllm import LLM, SamplingParams; \
 from vllm.config import VllmConfig; \
 import inspect, vllm.model_executor.models.qwen3_dflash as q; \
 assert 'sliding_attention_layer_names' in inspect.getsource(q), 'SWA lost'; \
+assert 'markov_head' in inspect.getsource(q) and 'sample_draft_block_semiar' in inspect.getsource(q), 'Hikari Markov DFlash support lost'; \
+import vllm.v1.spec_decode.llm_base_proposer as lbp; \
+assert 'sample_draft_block_semiar' in inspect.getsource(lbp), 'Hikari Markov proposer branch lost'; \
 import vllm.v1.spec_decode.utils as u; \
 assert 'is_valid_ctx' in inspect.getsource(u), 'ctx-slot mask lost'; \
 import vllm.v1.attention.backends.triton_attn as t; \
@@ -128,7 +142,7 @@ RUN rm -rf /build /root/.cache/pip
 LABEL ai.aeon.vllm_base="vLLM 0.24.0 (from-source, sm_121a 3-way merge)" \
       ai.aeon.model="fleet: Gemma-4-26B-A4B, Qwen3.6-27B, Qwen3.6-35B-A3B" \
       ai.aeon.hardware="NVIDIA DGX Spark GB10 SM121" \
-      ai.aeon.features="gemma4,qwen3.6,dflash,dflash-highconc-fix,prefix-cache-fix,nvfp4,nvfp4-kv,fp8-kv,flashinfer-0.6.12,flashinfer-b12x,kernel-config,uma-clamp,dynamic-sd,async-sched,turboquant,tool-calling" \
+      ai.aeon.features="gemma4,qwen3.6,dflash,hikari-dflash-markov,dflash-highconc-fix,prefix-cache-fix,nvfp4,nvfp4-kv,fp8-kv,flashinfer-0.6.12,flashinfer-b12x,kernel-config,uma-clamp,dynamic-sd,async-sched,turboquant,tool-calling" \
       org.opencontainers.image.description="AEON vLLM Ultimate — vLLM 0.24.0 built from source for DGX Spark / Blackwell (sm_121a/GB10). One image serves the whole AEON fleet (Gemma-4-26B-A4B, Qwen3.6-27B, Qwen3.6-35B-A3B) with DFlash speculative decoding, NVFP4 weights, Triton NVFP4/FP8 KV cache (PR #44389), DFlash SWA + prefix-cache + high-concurrency fixes (PR #40898/#41703/#43982-port), UMA cudagraph clamp (#46932-port), FlashInfer 0.6.12, TurboQuant K8V4." \
       org.opencontainers.image.documentation="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
       org.opencontainers.image.source="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
