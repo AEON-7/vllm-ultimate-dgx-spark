@@ -72,11 +72,13 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 > **Why these flags:** `--quantization modelopt` matches the recommended Multimodal-NVFP4-MTP body; `--kv-cache-dtype fp8_e4m3` is the stable DFlash pairing on GB10; `--gpu-memory-utilization 0.60` leaves room for Qwen3-ASR/Qwen3-TTS sidecars on the same Spark; and `--attention-backend TRITON_ATTN` must be set both on the target model and inside the DFlash JSON because vLLM does not inherit target attention-backend settings into speculative drafters. `--max-model-len 229376` gives one near-full-context session while still leaving KV headroom for output and smaller concurrent agents; `--max-num-seqs 16` and `--max-num-batched-tokens 32768` keep the agent/gateway burst path usable. Leave `--mamba-block-size` unset and let vLLM derive the hybrid GDN geometry. If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir so vLLM sees real weights.
 
+> **Alternate DFlash drafter:** this image also includes the Hikari07jp / DSpark Qwen3.6 DFlash compatibility overlay. The default quickstart still uses `z-lab/Qwen3.6-27B-DFlash`, but Hikari-style drafters with `markov_head.markov_w1.weight` / `markov_head.markov_w2.weight` now load and decode through the current vLLM 0.24.0 proposer path. Swap only the drafter mount and JSON model path, for example `-v /models/DSpark-Qwen3.6-27B-AEON-draft:/drafter:ro` with the same `--speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":12,"attention_backend":"TRITON_ATTN"}'`.
+
 ## What's inside
 
 | Component | Version | Why |
 |---|---|---|
-| **vLLM** | 0.23.0 + sm_121a build, AEON spec-decode 3-way merge | Built from source for GB10; carries PR #44389 (Triton NVFP4 KV) + #40898 (DFlash SWA) + #41703 (prefix-cache corruption) + #43982-port (DFlash high-concurrency fix, new 2026-06-18) |
+| **vLLM** | 0.24.0 + sm_121a build, AEON spec-decode 3-way merge | Built from source for GB10; carries PR #44389 (Triton NVFP4 KV) + #40898 (DFlash SWA) + #41703 (prefix-cache corruption) + #43982-port (DFlash high-concurrency fix), plus the Hikari Markov DFlash drafter overlay |
 | **PyTorch** | 2.11.0+cu130 | CUDA 13.0 with sm_121a (DGX Spark / GB10) compute capability |
 | **transformers** | 5.10.0.dev0 (HEAD) | Recognizes `gemma4_unified`, `qwen3_5`, all bleeding-edge model classes |
 | **flashinfer** | 0.6.12 | NVFP4 GEMM kernels, sliding-window attention, MLA, custom attention |
