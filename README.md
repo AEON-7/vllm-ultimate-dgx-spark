@@ -21,7 +21,7 @@ Built on **vLLM v0.25.0 compiled from source for sm_121a**, merged with the AEON
 The canonical Spark recipe: **Qwen3.6-27B Multimodal-NVFP4-MTP body + z-lab DFlash drafter + FP8 KV** — the measured-best daily-driver config (parity speed with the smaller XS body, higher quality-eval scores). One block pulls the container, the model, and the drafter, then serves on `:8000`. (Full deployment matrix — MTP/NVFP4-KV, TurboQuant, Gemma-4-26B, dedicated-VRAM Blackwell — is in [Deployment recipes](#deployment-recipes) further down.)
 
 ```bash
-# 1) Pull the unified container (vLLM 0.24.0 + sm_121a + DFlash high-concurrency fix)
+# 1) Pull the unified container (vLLM 0.25.0 + sm_121a + DFlash on a pinned V1 runner)
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest
 
 # 2) Pull the recommended body — Multimodal-NVFP4-MTP (modelopt NVFP4, image+video capable;
@@ -75,6 +75,50 @@ curl -s http://localhost:8000/v1/chat/completions \
 ```
 
 > **Why these flags:** `--quantization modelopt` matches the recommended Multimodal-NVFP4-MTP body; `--kv-cache-dtype fp8_e4m3` is the stable DFlash pairing on GB10; `--gpu-memory-utilization 0.60` leaves room for Qwen3-ASR/Qwen3-TTS sidecars on the same Spark; and `--attention-backend TRITON_ATTN` must be set both on the target model and inside the DFlash JSON because vLLM does not inherit target attention-backend settings into speculative drafters. `--max-model-len 229376` gives one near-full-context session while still leaving KV headroom for output and smaller concurrent agents; `--max-num-seqs 16` and `--max-num-batched-tokens 32768` keep the agent/gateway burst path usable. Leave `--mamba-block-size` unset and let vLLM derive the hybrid GDN geometry. If `git clone` leaves LFS pointer files, re-run `git lfs pull` in the model dir so vLLM sees real weights.
+
+## What's new in vLLM 0.25.0 — features & unlocks
+
+Rebased from vLLM 0.24.0 onto **vLLM 0.25.0** (`702f4814`) as a 3-way merge that preserves the entire AEON spec-decode stack. What the rebase brings:
+
+### ⚡ Decode & kernel wins (automatic — no flag)
+- **NVFP4 swizzled-scale zero-init restored** (#45739) — recovers Blackwell NVFP4 **decode** throughput that a prior upstream regression had degraded. (Net effect on sm_121a is small — GB10 decode is memory-bandwidth-bound — but the fix is in.)
+- **DFlash per-layer RMSNorm fusion** (#46761) — fuses the drafter's RMSNorm into one batched CUDA kernel, cutting per-step launch overhead on the **Qwen3.6** DFlash drafters (27B / 35B-A3B).
+- **FlashInfer 0.6.13** (from 0.6.12) — FP8-KV FA2 prefill fix + sm12x gating + a Mamba SSU cross-warp race fix relevant to the 26B hybrid. Stale 0.6.12 JIT-cache purged so 0.6.13 kernels aren't shadowed.
+- **`skip cooperative top-K on SM120/121`** (#47164) and **DeepGEMM SM120** (#47304) land in-tree — remove a `cudaErrorInvalidValue` launch-failure class and fix an FP8-block-scaled boot crash on Spark-class Blackwell.
+- **cutlass-dsl 4.5.2** pinned for the FA4 cute-DSL path; **`enable_cutedsl_warmup`** on by default.
+
+### 🧊 KV / memory / stability
+- **NVFP4-KV skip-layers sliding-window page unification** (#42890) — cleaner KV page sizing for hybrid SWA models, integrated with our carried Triton NVFP4-KV.
+- **`kv_cache_memory_bytes` excluded from the cache-config hash** (#47356) — carried from the maxsafe tree; directly relevant to the GB10 unified-memory work in issue #9.
+- **Mamba-hybrid prefix caching** (#42406), **Mamba2 crash fix** (#47428), **hybrid FA block-size restriction removed** (#36701) — all available for the GDN/NemotronH hybrids (candidate fix for the 35B stale-context APC issue; being validated).
+- **UMA negative-cudagraph-estimate clamp** + **cudagraph spec-decode alignment** + **DFlash block-table unpad** — AEON fixes, now source-baked.
+
+### 🧬 Speculative decoding — more methods available
+- **DFlash** remains the AEON default (SWA drafter + ctx-mask + high-concurrency fix), running on the **pinned V1 runner** (see below).
+- **Universal spec decode across heterogeneous vocabularies (TLI)** (#38174), **dynamic spec decode compatible with full CUDA graphs** (#45953), **block verification for rejection sampling** (#46781), and the **DSpark** drafter (#46995/#47093) are all present in-tree for future use (DSpark needs a trained per-model drafter + Model-Runner-V2 — a Phase-2 R&D item).
+
+### 🖥️ Model Runner V2 & the V1 pin (important)
+v0.25.0 makes **Model-Runner-V2 the default for dense models** and whitelists `method=dflash` for MRv2 **with no fallback** — which would silently route Qwen3.6-27B to an *unpatched* V2 DFlash tree (no sliding-window, none of our fixes). This image bakes **`VLLM_USE_V2_MODEL_RUNNER=0`** so **every model stays on the carried V1 runner** with the full AEON patch set. Porting the carries onto MRv2 (to unlock DSpark, dynamic-SD-with-cudagraphs, and hybrid-APC natively) is the committed Phase-2 workstream.
+
+### 🔀 TP=2 — wired in, opt-in, untested
+Tensor parallelism is available via `--tensor-parallel-size 2` and carries #47081 (blocking CUDA events → no driver-lock busy-polling under TP collective contention, neutral at TP=1). **TP>1 ships UNVALIDATED** — there is no second Spark to test it; **TP=1 is the supported, tested default.** Two Sparks have no NVLink (ConnectX/RoCE only), and the whole fleet fits one 121 GB Spark, so TP=2 is only relevant for >121 GB models (e.g. Step-3.7). Do **not** enable NCCL symmetric memory on SM121.
+
+### 🧰 Build hardening (this rebase)
+- **Two silent-killer merge bugs caught + fixed** that a plain merge would ship: v0.25.0 renumbered the `KVQuantMode.NVFP4` enum 4→5 while our kernel hard-coded `== 4` in a non-conflict region (would have silently disabled **all** NVFP4 KV); plus two auto-merge SyntaxErrors in `qwen3_dflash.py`.
+- **torchcodec skipped** — v0.25.0 lists `torchcodec>=0.14`, but 0.14.0 is ABI-incompatible with torch 2.11; vLLM guards the import (`PlaceholderModule`), so absence degrades gracefully (video-decode unavailable) while text/image/audio/voice are unaffected. Revisit when a torch-2.11 torchcodec ships.
+- Kept **`TORCH_CUDA_ARCH_LIST=12.1a`** (bare `12.1` would `#ifdef` out the FP4 kernels → Marlin fallback), GCC 12, transformers 5.12.1, xgrammar ≥ 0.2.1.
+- Dropped the now-upstream #45544 tie_weights cherry-pick.
+
+### 📊 Full-fleet A/B before promotion (GB10, vs the prior v0.24.0 image)
+| Model | v0.25.0 | v0.24.0 | NVFP4 backend |
+|---|---|---|---|
+| Gemma-4-26B-A4B | 505–511 tok/s @c16 · ~73 single | 559 @c16 · ~71 single | CUTLASS |
+| Qwen3.6-35B-A3B (Ornith) | 341 @c12 · 77–79 single | 348 @c12 · 72–76 single | Marlin¹ |
+| Qwen3.6-27B (AEON-Ultimate) | 88 @c8 · ~22 single | 100 @c8 · ~23 single | CUTLASS |
+
+All three: DFlash on the V1 runner, tool-calling working, DFlash acceptance healthy — **throughput parity, no regressions.** ¹The Ornith-35B checkpoint lacks per-input global scales, so it correctly uses Marlin; forcing `--linear-backend flashinfer_cutlass` crashes it. Checkpoints **with** those scales (Gemma-26B, Qwen-27B) run native CUTLASS FP4. To move the 35B to CUTLASS, re-quantize with CUTLASS-compatible scales.
+
+> 💡 **Speed tips:** GB10 decode is memory-bandwidth-bound, so the real levers are (1) **FP8 KV cache** (`--kv-cache-dtype fp8` with the drafter also on `triton_attn`) — halves KV reads, ~2× KV capacity, DFlash acceptance intact; and (2) mounting a **persistent vLLM cache** (`-v …:/root/.cache/vllm`) so a restart warms in ~2 min instead of re-running the ~13 min cold autotune.
 
 ## What's inside
 
@@ -240,7 +284,7 @@ The [Quickstart](#quickstart-dgx-spark-copy-paste) at the top is the canonical d
 
 ```bash
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest
-# or pin the current build (vLLM 0.23.0 + DFlash high-concurrency fix)
+# or pin the current build (vLLM 0.25.0 + sm_121a)
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-18-v0.23.0-dflashfix
 # previous build (pre-v0.23.0 / pre-concurrency-fix) kept for rollback
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-11-pr41703
