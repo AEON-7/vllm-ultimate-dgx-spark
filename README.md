@@ -95,10 +95,15 @@ Rebased from vLLM 0.24.0 onto **vLLM 0.25.0** (`702f4814`) as a 3-way merge that
 
 ### 🧬 Speculative decoding — more methods available
 - **DFlash** remains the AEON default (SWA drafter + ctx-mask + high-concurrency fix), running on the **pinned V1 runner** (see below).
-- **Universal spec decode across heterogeneous vocabularies (TLI)** (#38174), **dynamic spec decode compatible with full CUDA graphs** (#45953), **block verification for rejection sampling** (#46781), and the **DSpark** drafter (#46995/#47093) are all present in-tree for future use (DSpark needs a trained per-model drafter + Model-Runner-V2 — a Phase-2 R&D item).
+- **Universal spec decode across heterogeneous vocabularies (TLI)** (#38174), **dynamic spec decode compatible with full CUDA graphs** (#45953), **block verification for rejection sampling** (#46781), and the **DSpark** drafter (#46995/#47093) are all present in-tree — and as of the `2026-07-16` build the MRv2 spec-decode loaders they run on are **correct** (lm_head-sharing fix, see below). DSpark still needs a trained per-model drafter that doesn't exist for this fleet, so it remains R&D.
 
-### 🖥️ Model Runner V2 & the V1 pin (important)
-v0.25.0 makes **Model-Runner-V2 the default for dense models** and whitelists `method=dflash` for MRv2 **with no fallback** — which would silently route Qwen3.6-27B to an *unpatched* V2 DFlash tree (no sliding-window, none of our fixes). This image bakes **`VLLM_USE_V2_MODEL_RUNNER=0`** so **every model stays on the carried V1 runner** with the full AEON patch set. Porting the carries onto MRv2 (to unlock DSpark, dynamic-SD-with-cudagraphs, and hybrid-APC natively) is the committed Phase-2 workstream.
+### 🖥️ Model Runner V2 — audited, fixed, still pinned to V1 (by choice)
+v0.25.0 makes **Model-Runner-V2 the default for dense models** and whitelists `method=dflash` for MRv2 **with no fallback**. This image still bakes **`VLLM_USE_V2_MODEL_RUNNER=0`** — but as of the `2026-07-16` build the pin is a *choice*, not a necessity. The Phase-2 MRv2 audit + port is done:
+
+- **Fixed the one real MRv2 bug — spec-decode lm_head sharing** (upstream [#47914](https://github.com/vllm-project/vllm/pull/47914), ported at all 3 sites: `dflash`, `eagle`, `dspark`). MRv2 read `lm_head` off the outer `*ForConditionalGeneration` wrapper → `None` → the draft head stayed **zero-initialised** → **0% acceptance at every position** on multimodal-wrapped targets like Qwen3.6-27B. With the fix baked: 0% → healthy, **full V1 parity** in a same-image A/B (short prompts *and* 23.8k-token long-context with exact needle retrieval, both runners).
+- **The other V1 carries turn out not to be MRv2 blockers** (adversarially-verified source audit + hardware A/B): the high-concurrency block-table crash is *structurally impossible* on MRv2 (everything is sliced to one consistent `num_reqs_padded`); the #41703 rejected-slot masking difference is *benign* there (the same-step drafter forward overwrites those exact slots); and the missing #40898 SWA wiring (the 5-layer drafter runs non-causal on MRv2) measured **zero acceptance impact**.
+- **Why the pin stays anyway:** it turns out dropping it wouldn't move *any* fleet model by default — the 27B is a **75%-linear-attention hybrid** (`Qwen3_5ForConditionalGeneration` is `IsHybrid`, 48/64 layers linear), and hybrids are excluded from default-V2 exactly like the two MoE models. The pin guards against upstream routing-default changes and accidental opt-ins (e.g. `method=dspark` force-routing). Explicitly moving a model (env `=1`) also buys zero gain — DSpark needs a trained per-model drafter that doesn't exist for this fleet, dynamic-SD measured **−12–16%** on GB10, hybrid-APC is gated out of default-V2, and MRv2 still silently ignores `thinking_token_budget`. V1 keeps the fully-carried, battle-tested path; MRv2 is now a **correct fallback** instead of a broken one.
+- **Opting in anyway (MRv2 / DSpark):** the pin is a default env var, not a build-time removal — everything MRv2 ships in the image. Add `-e VLLM_USE_V2_MODEL_RUNNER=1` to run any model on MRv2 (DFlash on MRv2 is validated working with the lm_head fix). **DSpark** additionally *requires* that override (the baked `=0` wins over DSpark's V2-forcing and fails validation loudly) plus a trained DSpark drafter (`Qwen3DSparkModel` arch, or a DeepSeek-V4 checkpoint with in-target drafter weights) — the loader is head-fix-covered and ready when such a drafter exists.
 
 ### 🔀 TP=2 — wired in, opt-in, untested
 Tensor parallelism is available via `--tensor-parallel-size 2` and carries #47081 (blocking CUDA events → no driver-lock busy-polling under TP collective contention, neutral at TP=1). **TP>1 ships UNVALIDATED** — there is no second Spark to test it; **TP=1 is the supported, tested default.** Two Sparks have no NVLink (ConnectX/RoCE only), and the whole fleet fits one 121 GB Spark, so TP=2 is only relevant for >121 GB models (e.g. Step-3.7). Do **not** enable NCCL symmetric memory on SM121.
@@ -124,10 +129,10 @@ All three: DFlash on the V1 runner, tool-calling working, DFlash acceptance heal
 
 | Component | Version | Why |
 |---|---|---|
-| **vLLM** | 0.23.0 + sm_121a build, AEON spec-decode 3-way merge | Built from source for GB10; carries PR #44389 (Triton NVFP4 KV) + #40898 (DFlash SWA) + #41703 (prefix-cache corruption) + #43982-port (DFlash high-concurrency fix, new 2026-06-18) |
+| **vLLM** | 0.25.1 + sm_121a build, AEON spec-decode 3-way merge | Built from source for GB10; carries PR #44389 (Triton NVFP4 KV) + #40898 (DFlash SWA) + #41703 (prefix-cache corruption) + #43982-port (DFlash high-concurrency fix) + #47914-port (MRv2 spec-decode lm_head sharing, new 2026-07-16) |
 | **PyTorch** | 2.11.0+cu130 | CUDA 13.0 with sm_121a (DGX Spark / GB10) compute capability |
-| **transformers** | 5.10.0.dev0 (HEAD) | Recognizes `gemma4_unified`, `qwen3_5`, all bleeding-edge model classes |
-| **flashinfer** | 0.6.12 | NVFP4 GEMM kernels, sliding-window attention, MLA, custom attention |
+| **transformers** | 5.12.1 | Recognizes `gemma4_unified`, `qwen3_5`, all bleeding-edge model classes |
+| **flashinfer** | 0.6.13 | NVFP4 GEMM kernels, sliding-window attention, MLA, custom attention; FP8-KV FA2 prefill fix + sm12x gating |
 | **TurboQuant** | 0.2.0 (AEON-7 fork) | CUDA-graph-safe QJL — 4-bit KV compression on top of vLLM's native KV cache |
 | **modelopt** | available via pip if needed | Quantization framework (not bundled — image stays small for serving) |
 
@@ -284,10 +289,11 @@ The [Quickstart](#quickstart-dgx-spark-copy-paste) at the top is the canonical d
 
 ```bash
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest
-# or pin the current build (vLLM 0.25.0 + sm_121a)
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-18-v0.23.0-dflashfix
-# previous build (pre-v0.23.0 / pre-concurrency-fix) kept for rollback
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-11-pr41703
+# or pin the current build (vLLM 0.25.1 + sm_121a + MRv2 lm_head fix)
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-16-v0.25.1
+# previous builds kept for rollback
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-14-v0.25.0
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-08-v0.24.0-maxsafe
 ```
 
 ### Recipe A — DGX Spark, DFlash drafter + FP8 KV (recommended for daily-driver)

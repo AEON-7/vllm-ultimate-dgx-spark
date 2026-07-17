@@ -1,5 +1,6 @@
-# Ultimate vLLM image for DGX Spark (GB10 / sm_121a) — v0.25.0 base
-# - Source: vLLM v0.25.0 (702f4814) 3-way merged onto the AEON maxsafe tree
+# Ultimate vLLM image for DGX Spark (GB10 / sm_121a) — v0.25.1 base
+# - Source: vLLM v0.25.1 (752a3a504; v0.25.0 702f4814 + #47888 torchcodec import guard
+#     + #48330 mixed-dtype allreduce-RMSNorm fusion guard) 3-way merged onto the AEON maxsafe tree
 #     (codex/aeon-v0.24.0-maxsafe-20260708 = v0.24.0 + extra cherry-picks). Preserves:
 #     #44389 (Triton NVFP4 KV) + #40898/#41703 (DFlash SWA + ctx-mask + Gemma4 batched-verify),
 #     baked fixes (dflash-blocktable-unpad, cudagraph_align_all_modes, UMA negative-estimate clamp),
@@ -30,8 +31,8 @@ ENV CCACHE_DISABLE=1
 ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 ENV MAX_JOBS=12
 ENV NVCC_THREADS=2
-ENV SETUPTOOLS_SCM_PRETEND_VERSION="0.25.0+aeon.sm121a.dflash"
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM="0.25.0+aeon.sm121a.dflash"
+ENV SETUPTOOLS_SCM_PRETEND_VERSION="0.25.1+aeon.sm121a.dflash"
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM="0.25.1+aeon.sm121a.dflash"
 # Phase-1 MRv2 pin: keep the carried V1 GPUModelRunner for all models (see header).
 ENV VLLM_USE_V2_MODEL_RUNNER=0
 
@@ -129,7 +130,7 @@ RUN mkdir -p /tmp/cuda-stub && \
     ln -s /usr/local/cuda-13.0/targets/sbsa-linux/lib/stubs/libcuda.so /tmp/cuda-stub/libcuda.so.1 && \
     LD_LIBRARY_PATH=/tmp/cuda-stub:$LD_LIBRARY_PATH python3 -c "\
 import vllm._C_stable_libtorch; import vllm._moe_C_stable_libtorch; \
-import vllm, inspect; assert vllm.__version__.startswith('0.25.0'), vllm.__version__; \
+import vllm, inspect; assert vllm.__version__.startswith('0.25.1'), vllm.__version__; \
 from vllm import LLM, SamplingParams; from vllm.config import VllmConfig; \
 import vllm.model_executor.models.qwen3_dflash as q; assert 'sliding_attention_layer_names' in inspect.getsource(q), 'SWA lost'; \
 import vllm.v1.spec_decode.utils as u; assert 'is_valid_ctx' in inspect.getsource(u), 'ctx-slot mask lost'; \
