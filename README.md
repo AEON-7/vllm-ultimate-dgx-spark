@@ -1,12 +1,12 @@
 # AEON vLLM Ultimate — DGX Spark / Blackwell
 
 [![docker](https://img.shields.io/badge/ghcr.io-aeon--7%2Faeon--vllm--ultimate-blue?logo=docker)](https://ghcr.io/aeon-7/aeon-vllm-ultimate)
-[![vLLM](https://img.shields.io/badge/vLLM-0.25.1%2Bsm__121a.aeon-orange)](https://github.com/vllm-project/vllm)
+[![vLLM](https://img.shields.io/badge/vLLM-0.26.0%2Bsm__121a.aeon-orange)](https://github.com/vllm-project/vllm)
 [![sm_121a](https://img.shields.io/badge/sm__121a-DGX%20Spark-green)](https://www.nvidia.com/en-us/data-center/dgx-spark/)
 
 **One container, the whole fleet.** A single image — `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` — serves every AEON model on **NVIDIA DGX Spark (GB10, sm_121a)** and other consumer-Blackwell GPUs (RTX 50 series): **Gemma-4-26B-A4B**, **Qwen3.6-27B**, and **Qwen3.6-35B-A3B** all run on the same build, with DFlash speculative decoding, NVFP4 weights, NVFP4/FP8 KV cache, and the OpenAI-compatible gateway intact.
 
-Built on **vLLM v0.25.1 compiled from source for sm_121a**, merged with the AEON speculative-decoding stack: Triton software **NVFP4 KV cache** (PR #44389) + **DFlash SWA / high-concurrency / prefix-cache fixes** (PR #40898, #41703, #43982-port) + the **AEON DGX Spark runtime patches** + **TurboQuant** + **DFlash speculative decoding**.
+Built on **vLLM v0.26.0 compiled from source for sm_121a**, merged with the AEON speculative-decoding stack: Triton software **NVFP4 KV cache** (PR #44389) + **DFlash SWA / high-concurrency / prefix-cache fixes** (PR #40898, #41703, #43982-port) + the **AEON DGX Spark runtime patches** + **TurboQuant** + **DFlash speculative decoding**.
 
 > 🆕 **2026-07-14 — `:latest` is now the v0.25.0 sm_121a build (`:2026-07-14-v0.25.0`).** Rebuilt from source on vLLM **v0.25.0** (commit `702f4814`) as a 3-way merge onto the AEON tree. Still carries the three open upstream PRs (#44389 Triton NVFP4-KV, #40898 DFlash SWA, #41703 prefix-cache/batched-verify — all re-verified still unmerged) plus the source-baked fixes (DFlash block-table unpad, cudagraph spec-decode alignment, UMA negative-estimate clamp) and the maxsafe carries (**#47356** exclude `kv_cache_memory_bytes` from cache-hash, #45207 Mamba page-pad, #47053). Picks up v0.25.0's **#45739** (NVFP4 swizzled-scale zero-init → Blackwell decode) and **#46761** (DFlash per-layer RMSNorm fusion). Dropped the now-upstream #45544 tie_weights cherry-pick. Deps: **FlashInfer 0.6.13**, cutlass-dsl 4.5.2, torch 2.11.0 (unchanged). ⚠️ **The big one — MRv2:** v0.25.0 defaults dense models to **Model-Runner-V2** and whitelists `method=dflash` for MRv2 **with no fallback**, which would silently route Qwen3.6-27B to an *unpatched* V2 DFlash tree (no sliding-window, none of our fixes). This image bakes **`VLLM_USE_V2_MODEL_RUNNER=0`** so every model stays on the carried V1 runner. **TP=2 is wired in (opt-in via `--tensor-parallel-size 2`) but UNTESTED** — no second Spark; TP=1 is the tested, supported default. Two merge bugs a plain merge would ship were caught + fixed (the `KVQuantMode.NVFP4` enum renumber 4→5 that silently disables NVFP4 KV; two auto-merge SyntaxErrors in qwen3_dflash.py). **Full-fleet A/B before push: v0.25.0 at throughput parity with v0.24.0 across Gemma-4-26B / Qwen3.6-35B-A3B / Qwen3.6-27B**, DFlash on V1, tools working, acceptance healthy. Rollback tag: `:2026-07-08-v0.24.0-maxsafe`.
 
@@ -78,7 +78,49 @@ curl -s http://localhost:8000/v1/chat/completions \
 
 ## What's new in vLLM 0.25.x — features & unlocks
 
-### 🆕 2026-07-16 build — v0.25.1 + Model-Runner-V2 lm_head fix
+### 🆕 2026-07-27 build — **vLLM 0.26.0** (429 commits) + NVFP4_AWQ + batch-cap unlock
+
+**Measured on one DGX Spark (GB10, sm_121a, 121 GB unified memory):**
+
+| Gemma-4-26B-A4B · NVFP4 · DFlash n=11 | `max-num-seqs 32` | **`max-num-seqs 128`** |
+|---|---|---|
+| 32 concurrent | 746.6 tok/s | 754.7 tok/s |
+| 64 concurrent | 783.0 tok/s | **981.3 tok/s** (+25%) |
+| **128 concurrent** | 789.3 tok/s | **1151.5 tok/s** (**+46%**) |
+
+0 errors at every level, acceptance held at 3.25 / 20.5%, single-stream 63.9–71.7 tok/s.
+The old "cap `max-num-seqs` ≤32 with DFlash" guidance is **obsolete** — the fixes in this build
+(#50065 padded-batch draft buffers, the #43982-port block-table unpad, the UMA clamp) are what
+make 128-way batching survivable on unified memory.
+
+**Per-category throughput** (Qwen3.6-27B-MTP, n=11, FP8 KV — a 2.5× spread, so single-prompt
+benchmarks badly misrepresent this hardware):
+`code 39.6` · `math 32.4` · `reasoning 27.3` · `summary 23.0` · `dialogue 17.4` · `prose 16.0` tok/s
+
+**New in 0.26.0 that we now use:**
+- **`--prefix-match-unit`** (#46384, renamed from `--hash-block-size`) — the finest token boundary a
+  prefix-cache hit can land on. It may be set finer than the physical KV block size as long as every
+  KV-cache group's `block_size` divides it. vLLM defaults it to `gcd(all block sizes)` = **16** for our
+  hybrid stack (attention 16 / mamba 256), which is already optimal — set it explicitly for clarity.
+- **`speculative_config.kv_cache_dtype`** (#48787) — the drafter can now carry its own KV dtype,
+  independent of the target. Breaks the long-standing constraint where a non-causal DFlash drafter
+  forced BF16 KV everywhere.
+- **Hybrid partial prefix-cache hits** (#46384 + #47782) — real gains for the hybrid 27B/35B.
+- **NVFP4_AWQ checkpoints now load** (see below) — unblocks Gemma-4-31B-DECKARD and Gemma-4-E4B.
+- FlashInfer 0.6.14, cutlass-dsl 4.6.0, quack-kernels 0.6.1, apache-tvm-ffi 0.1.10; **torch stays 2.11.0**.
+
+**⚠️ Do NOT set `VLLM_ENABLE_STARTUP_PLAN=1` on GB10** — it records `device_total_memory` via NVML,
+which unified memory does not support; the engine dies at init with `NVMLError_NotSupported`.
+
+#### NVFP4_AWQ support (new carry)
+ModelOpt `quant_algo="NVFP4_AWQ"` is plain-NVFP4 tensor layout plus optional per-linear
+`pre_quant_scale` vectors from AWQ calibration. We accept the algo at both v0.26.0 gates, register
+the scale (defaulting to **ones**, so unsmoothed layers are an exact no-op), scrub the rare FP8 NaN
+block scales ModelOpt 0.42.x emits (E4M3 `0x7F`/`0xFF`), and apply `x * pre_quant_scale` above the
+kernel dispatch so it is backend-agnostic. Verified on Gemma-4-31B-DECKARD: **120/120 vectors
+loaded**, coherent generation, from a checkpoint no vLLM could previously load.
+
+### 2026-07-16 build — v0.25.1 + Model-Runner-V2 lm_head fix
 - **MRv2 spec-decode lm_head sharing fix** (port of upstream [#47914](https://github.com/vllm-project/vllm/pull/47914) at all 3 sites: `dflash`, `eagle`, `dspark`) — on MRv2, `*ForConditionalGeneration` targets (Qwen3.6-27B) left the draft head zero-initialised → **0% acceptance**; now **0% → healthy at full V1 parity** (same-image A/B incl. 23.8k-token long-context with exact needle retrieval). MRv2 becomes a *correct* opt-in path and the DSpark loader is fix-covered for when a fleet drafter exists.
 - **vLLM v0.25.1 merged** (2 upstream fixes, conflict-free): [#47888](https://github.com/vllm-project/vllm/pull/47888) torchcodec import no longer blocks startup when FFmpeg is absent; [#48330](https://github.com/vllm-project/vllm/pull/48330) guards mixed-dtype FlashInfer allreduce+RMSNorm+quant fusions that corrupted hidden state (`!!!!!` output) on **NVFP4 Gemma/Qwen-style models under TP>1** — the guard the dormant wired-in TP=2 path needed (no effect at TP=1).
 - **MRv2 carry-parity audit documented** (see the Model-Runner-V2 section below): block-table crash structurally impossible on MRv2, #41703 masking benign there, #40898 SWA absent but zero measured acceptance impact; routing corrected — the 27B is `IsHybrid`, so **no fleet model routes to V2 by default** even unpinned.
@@ -297,7 +339,7 @@ The [Quickstart](#quickstart-dgx-spark-copy-paste) at the top is the canonical d
 ```bash
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest
 # or pin the current build (vLLM 0.25.1 + sm_121a + MRv2 lm_head fix)
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-16-v0.25.1
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-27-v0.26.0
 # previous builds kept for rollback
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-14-v0.25.0
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-08-v0.24.0-maxsafe

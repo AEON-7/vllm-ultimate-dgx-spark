@@ -1,3 +1,13 @@
+## 2026-07-27 — vLLM v0.26.0 rebuild (`:2026-07-27-v0.26.0` = `:latest`)
+
+- Tree: `aeon-v0.26.0` = 3-way merge of tag `v0.26.0` (568afb3a1, **429 commits**) onto `aeon-v0.25.0`. 16 conflicts. NOTE: the true merge base is `6db31c8e7`, NOT v0.25.1 — v0.25.1 is a release-branch tag and its backports appear as "ours", explaining ~5 conflicts in files we never touched.
+- **Carries kept:** #44389 Triton NVFP4-KV (**REWRITTEN** for the new 4-D layout), #40898 DFlash SWA on V1, #41703 ctx-mask + Gemma4 bits, dflash-blocktable-unpad, cudagraph_align, UMA clamp, use_mm_prefix, requires_eagle_cache_drop. **New:** NVFP4_AWQ support, #46253 cudagraph `capture_error_mode`, #50065 padded-batch draft buffers, #49659 MoE-gated router warmup. **Dropped (now upstream):** our lm_head fix (#47914 merged), #47053, #47356, #45207, #48330.
+- **#44455 re-based the KV layout** 5-D -> 4-D packed. Our NVFP4-KV views are re-derived using plain SLICING, never upstream's `as_strided` offset math: that math only tiles correctly under HND, and **GB10 defaults to NHD** (FlashInfer forces HND only when `capability.major == 10`, i.e. SM100). Measured: upstream's formulation covers 7760/9216 bytes with **5 overlapping views** = silent KV corruption; ours covers 9216/9216 with none, under BOTH layouts. Pinned by a build gate (`nvfp4_kv_gate.py`) that fails the image on regression.
+- **Upstream now REJECTS our drafters on V1** (`qwen3_dflash.py` raises NotImplementedError for mixed sliding/full DFlash), and both our drafters are 4-sliding+1-full. Resolved as a union: our #40898 path stays (their raise is defined but has zero callers) plus their `_SLIDING_ATTENTION` / `_dflash_layer_causal` / `dflash_has_any_non_causal`, which the auto-merged V1 proposer imports.
+- **Build gotchas (each caught only by a real model boot, never by import gates):** v0.26.0 bumps `cutlass-dsl` 4.5.2->4.6.0 **together with** `quack-kernels` (base's 0.4.1 satisfies `>=0.4.0` but calls `cute.core.ThrMma`, removed in 4.6 -> AttributeError) **and** `apache-tvm-ffi` 0.1.9->0.1.10 (missing it kills `_warmup_ll_bf16_router_gemm` for every model). Pin all three; the build now asserts the ABI. FlashInfer 0.6.14 needs `--extra-index-url https://flashinfer.ai/whl/` (PyPI carries cubin only to 0.6.13).
+- **`VLLM_ENABLE_STARTUP_PLAN=1` is boot-breaking on GB10** (NVML has no memory support on unified memory).
+- **Validated:** Gemma-26B 1151.5 tok/s @128 concurrent at `max-num-seqs 128` (+46% vs the 32 cap), 0 errors, acceptance 3.25/20.5%; Qwen3.6-27B-MTP per-category 16.0-39.6 tok/s; Gemma-4-31B-DECKARD NVFP4_AWQ 120/120 pre_quant_scale + coherent output. Rollback: `:2026-07-16-v0.25.1`.
+
 # vLLM source pin
 
 Build was against:

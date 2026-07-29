@@ -113,6 +113,11 @@ async def stream_one(
         "max_tokens": max_tokens,
         "stream": True,
         "temperature": temperature,
+        # AEON: reasoning-parser models MUST be benched with thinking off.
+        # With it on this model streams tokens (usage reports 80) but the
+        # parser returns BOTH content and reasoning_content EMPTY, so the
+        # harness scores 0 despite HTTP 200 on every request.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     start = time.perf_counter()
     first_token_time = 0.0
@@ -139,7 +144,10 @@ async def stream_one(
                     continue
                 choice = chunk.get("choices", [{}])[0]
                 delta = choice.get("delta", {})
-                content = delta.get("content") or ""
+                # AEON: reasoning models (qwen3/gemma4 parsers) stream into
+                # `reasoning_content`, not `content` — counting only `content`
+                # yields 0 tokens despite HTTP 200 on every request.
+                content = delta.get("content") or delta.get("reasoning_content") or ""
                 if content:
                     if first_token_time == 0.0:
                         first_token_time = time.perf_counter() - start
