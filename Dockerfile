@@ -180,10 +180,10 @@ RUN python3 /tmp/nvfp4_kv_gate.py && rm /tmp/nvfp4_kv_gate.py
 RUN rm -rf /build /root/.cache/pip
 
 LABEL ai.aeon.vllm_base="vLLM 0.26.0 (from-source, sm_121a 3-way merge onto maxsafe)" \
-      ai.aeon.model="fleet: Gemma-4-26B-A4B, Qwen3.6-27B, Qwen3.6-35B-A3B" \
+      ai.aeon.model="fleet: Gemma-4-26B-A4B, Gemma-4-31B-DECKARD (NVFP4_AWQ), Qwen3.6-27B, Qwen3.6-35B-A3B" \
       ai.aeon.hardware="NVIDIA DGX Spark GB10 SM121" \
-      ai.aeon.features="gemma4,qwen3.6,dflash,dflash-highconc-fix,mrv2-lmhead-fix,dspark-ready,nvfp4,nvfp4-kv,fp8-kv,swizzled-scale-zeroinit,flashinfer-0.6.14,cutlass-dsl-4.5.2,uma-clamp,kv-cache-bytes-cachehash-fix,tp2-fusion-guard,v1-pinned,tp2-ready,turboquant,tool-calling" \
-      org.opencontainers.image.description="AEON vLLM Ultimate — vLLM 0.25.1 built from source for DGX Spark / Blackwell (sm_121a/GB10). Carries Triton NVFP4-KV (#44389), DFlash SWA + prefix-cache + high-concurrency fixes (#40898/#41703/#43982-port), MRv2 spec-decode lm_head fix (#47914-port: dflash/eagle/dspark), UMA/cudagraph clamps, TP>1 mixed-dtype fusion guard (#48330), FlashInfer 0.6.14; V1 runner pinned (MRv2 opt-in via env); TP=2-ready (untested)." \
+      ai.aeon.features="gemma4,qwen3.6,dflash,dflash-swa,dflash-highconc-fix,nvfp4,nvfp4-awq,nvfp4-kv,nvfp4-kv-nhd-safe,fp8-kv,spec-kv-dtype,prefix-match-unit,hybrid-apc,mrv2-lmhead-upstream,flashinfer-0.6.14,cutlass-dsl-4.6.0,quack-0.6.1,tvm-ffi-0.1.10,uma-clamp,tp2-cudagraph-fix,v1-pinned,tp2-ready,turboquant,tool-calling" \
+      org.opencontainers.image.description="AEON vLLM Ultimate — vLLM 0.26.0 built from source for DGX Spark / Blackwell (sm_121a/GB10). Carries Triton NVFP4-KV (#44389, re-derived for the 4-D packed layout with NHD-safe slicing), DFlash SWA + ctx-mask + high-concurrency fixes (#40898/#41703/#43982-port), NVFP4_AWQ checkpoint support (Gemma-4-31B DECKARD), UMA/cudagraph clamps, TP>=2 cudagraph fix (#46253-port), FlashInfer 0.6.14 + cutlass-dsl 4.6.0. 1151 tok/s @128 concurrent on Gemma-4-26B-A4B. V1 runner pinned; TP=2-ready (untested)." \
       org.opencontainers.image.documentation="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
       org.opencontainers.image.source="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
       org.opencontainers.image.licenses="Apache-2.0"
