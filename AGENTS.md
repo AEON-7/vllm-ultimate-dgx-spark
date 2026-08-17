@@ -16,7 +16,22 @@ Blackwell host.
 
 ## What this container is
 
-A from-source build of **vLLM v0.24.0** (compiled for sm_121a) that:
+A from-source build of **vLLM v0.27.1** (compiled for sm_121a) that:
+
+- Ships **DSpark speculative decoding with quantized Markov heads** (v0.27.1
+  headline #50424, + top-k Markov projection #49969) — MRv2-only; see the
+  DSpark recipe below.
+- **No longer bakes `VLLM_USE_V2_MODEL_RUNNER=0`.** At 0.27.1 the config
+  auto-routes: DSpark and mixed sliding/full DFlash drafters (all z-lab fleet
+  drafters are 4-sliding+1-full) force Model-Runner-V2, where upstream
+  #47914/#48113 run drafter SWA natively. Remove the env pin from old launch
+  scripts. Re-pin `=0` per-service ONLY if you use `thinking_token_budget`
+  (V2 silently ignores it).
+- torch 2.13.0+cu130 / Triton 3.7.1 / FlashInfer 0.6.16.post3 (exact
+  python+cubin+jit-cache trio) / NCCL 2.30.7 / transformers 5.14.1 /
+  torchcodec 0.16.0 (video decode is back).
+
+Carried forward from earlier builds (see SOURCE.md for the full ledger):
 
 - Uses **PR #44389**'s Triton software NVFP4 KV cache (~3× capacity
   vs FP8 at the same memory budget — value when serving long context
@@ -72,11 +87,11 @@ print(\"flashinfer:\", flashinfer.__version__)
 ```
 
 **Expected output**:
-- `vllm: 0.23.0+sm121a.aeon`
-- `torch: 2.11.0+cu130 13.0`
+- `vllm: 0.27.1+aeon.sm121a.dspark`
+- `torch: 2.13.0+cu130 13.0`
 - `cuda available: True`
 - `sm: (12, 1)` on GB10 or `(12, 0)` on consumer Blackwell
-- `flashinfer: 0.6.12`
+- `flashinfer: 0.6.16.post3`
 
 If `sm: (9, 0)` (Hopper) or `cuda available: False`, **stop** — this is the wrong image for this host.
 
@@ -159,6 +174,56 @@ docker run -d --name aeon-vllm \
 > drafting holds up and high concurrency is stable; short-context (<2048, one
 > window) is unchanged. n=12 won the n=8–15 sweep (statistically tied
 > short-context, best long-context acceptance) and is the production default.
+
+## Variant: DSpark Markov-head speculation (NEW in v0.27.1)
+
+DSpark is a semi-autoregressive **block** drafter: a DFlash-style parallel
+block draft plus a low-rank **Markov head** that biases each in-block token on
+the previously sampled one. v0.27.1 loads **quantized** Markov heads (#50424),
+so it pairs with the NVFP4 fleet bodies. DSpark runs **only on
+Model-Runner-V2** — do NOT set `VLLM_USE_V2_MODEL_RUNNER=0` with it (v0.27.1
+raises rather than silently degrading).
+
+Community drafters for the fleet (no Gemma-4-26B drafter exists yet — that
+model stays on DFlash until one is trained):
+
+- **Qwen3.6-27B** → `satgeze/Qwen3.6-27B-DSpark` (block 15; also consider
+  `Hikari07jp/DSpark-Qwen3.6-27B-AEON-draft`, fine-tuned from the z-lab DFlash
+  drafter — untested)
+- **Qwen3.6-35B-A3B** → `RedHatAI/Qwen3.6-35B-A3B-speculator.dspark`
+  (speculators format, block 8)
+
+```bash
+docker run -d --name aeon-vllm-dspark \
+  --gpus all --ipc=host --shm-size=16g --net=host \
+  -v /models/Qwen3.6-27B-AEON-MM-MTP:/model:ro \
+  -v /models/Qwen3.6-27B-DSpark-satgeze:/dspark:ro \
+  --entrypoint vllm ghcr.io/aeon-7/aeon-vllm-ultimate:latest \
+  serve /model \
+    --served-model-name aeon \
+    --dtype auto --quantization modelopt \
+    --kv-cache-dtype fp8_e4m3 \
+    --attention-backend TRITON_ATTN \
+    --max-model-len 131072 --max-num-seqs 16 --max-num-batched-tokens 16384 \
+    --gpu-memory-utilization 0.60 \
+    --enable-chunked-prefill \
+    --mamba-cache-mode align \
+    --speculative-config '{"method":"dspark","model":"/dspark","num_speculative_tokens":15}' \
+    --trust-remote-code
+```
+
+**DSpark rules:**
+
+- `num_speculative_tokens` must be **>= the drafter's `dspark_block_size`**
+  (15 for satgeze, 8 for RedHatAI). Smaller values feed the Markov-head
+  machinery an unsupported layout and produce **garbled output**, not merely
+  lower acceptance.
+- On the hybrid-GDN Qwen3.6-27B keep **`--mamba-cache-mode align`** whenever
+  prefix caching is enabled (upstream crash #52317; proper fix lands post-0.27.1).
+- NVFP4 **KV** (`--kv-cache-dtype nvfp4`) + DSpark is not upstream-validated —
+  use FP8 KV with DSpark.
+- Benchmark against the DFlash recipe at production concurrency before
+  flipping a service; DFlash remains the validated default.
 
 ## Variant: MTP self-speculation + NVFP4 KV (capacity-bound workloads)
 
