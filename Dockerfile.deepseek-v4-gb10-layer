@@ -1,0 +1,72 @@
+# aeon-vllm-ultimate + DeepSeek-V4-Flash enablement for DGX Spark (GB10 / sm_121a).
+#
+# The 0.24 base ships the native vllm/models/deepseek_v4 package but cannot serve it on GB10.
+# This layer fixes the full cascade, keeping the base's stock nvidia-cutlass-dsl 4.6.0
+# (validated end-to-end on 2x DGX Spark, TP2 + expert-parallel over RoCE):
+#   1. cutlass-dsl 4.6.0 moved ThrMma/TiledMma from cutlass.cute.core to the cutlass.cute top
+#      level; the base's own deepseek_v4 cutedsl ops (and vllm_flash_attn/cute) still reference
+#      cute.core.ThrMma -> AttributeError on ANY DeepSeek-V4 load. Fix: a PEP-562 lazy
+#      re-export shim appended to cute/core.py (thrmma_shim.py).
+#   2. The vendored DeepGEMM has no sm_12x kernels. Install DeepGEMM nv_dev (deepseek-ai/
+#      DeepGEMM#324: native sm120 kernels); site-packages takes precedence over the vendored copy.
+#   3. flashinfer 0.6.12 lacks the swa_topk_lens sparse-MLA decode API the base's
+#      flashinfer_sparse.py calls. Upgrade the trio to 0.6.14.
+#   4. cutlass 4.6.0's tvm-ffi AOT provider needs make_kwargs_wrapper(map_dataclass_to_tuple=...)
+#      -> apache-tvm-ffi >= 0.1.10; but tvm-ffi 0.1.12 aborts tilelang (double type-attr
+#      registration). The working pair: apache-tvm-ffi 0.1.11 + tilelang 0.1.11.
+#   5. Thin .py overlays (sm12x-gated or version-agnostic; no behavior change on sm90/100):
+#      - o_proj.py: adapt the SM100 packed-ue8m0 layout to nv_dev's fp8_einsum API
+#      - sparse_attn_indexer.py: route sm12x to persistent_topk (cooperative cluster launch
+#        fails on GB10)
+#      - scaled_mm/triton.py: exact e8m0->fp32 scale upcast (triton JIT has no E8M0 dtype)
+#      - vllm_flash_attn/cute/utils.py: pick the nvvm.fmax binding by signature feature-
+#        detection instead of the CUDA_VERSION proxy (4.6.0 reports CUDA 12.9 but ships the
+#        new bindings)
+#
+# Serve notes: --moe-backend marlin --linear-backend triton, VLLM_DEEP_GEMM_WARMUP=skip,
+# cudagraph_mode PIECEWISE + --max-num-seqs 8 (FULL decode-graph replay of any capture size
+# desyncs NCCL between the two ranks -> DistBackendError; collectives must stay uncaptured).
+FROM ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-01-v0.24.0
+LABEL aeon.layer="deepseek-v4-gb10" \
+      aeon.base="2026-07-01-v0.24.0" \
+      aeon.fixes="thrmma-core-shim,deepgemm-nv_dev-sm120,flashinfer-0.6.14-sparse-mla,tvmffi-0.1.11-tilelang-0.1.11,o_proj-sm12x-adapter,persistent-topk-sm12x,triton-e8m0-upcast,nvvm-fmax-feature-detect"
+
+# (1) re-export the classes cutlass-dsl 4.6.0 relocated out of cute.core (PEP 562, lazy).
+COPY thrmma_shim.py /tmp/thrmma_shim.py
+RUN CORE=$(python3 -c "import cutlass.cute.core as c; print(c.__file__)") && \
+    cat /tmp/thrmma_shim.py >> "$CORE" && rm /tmp/thrmma_shim.py && \
+    python3 -c "import cutlass.cute.core as c; assert c.ThrMma is not None and c.TiledMma is not None; import cutlass; print('cutlass', cutlass.__version__, 'ThrMma shim OK')"
+
+# (2) DeepGEMM nv_dev (sm120 kernels; deepseek-ai/DeepGEMM#324). Pinned commit.
+ENV TORCH_CUDA_ARCH_LIST=12.1a
+RUN git clone https://github.com/deepseek-ai/DeepGEMM.git /opt/deepgemm && \
+    cd /opt/deepgemm && git checkout a6b593d && git submodule update --init --recursive && \
+    MAX_JOBS=8 pip install --no-build-isolation --no-deps -v . 2>&1 | tail -4
+# import check in its own RUN: cwd must not be /opt/deepgemm, or python imports the source tree.
+RUN cd / && python3 -c "import deep_gemm; syms=[s for s in ('fp8_einsum','tf32_hc_prenorm_gemm','get_paged_mqa_logits_metadata','fp8_paged_mqa_logits') if hasattr(deep_gemm, s)]; assert len(syms) >= 3, syms; print('deep_gemm nv_dev OK:', syms)"
+
+# (3) flashinfer 0.6.14 (swa_topk_lens sparse-MLA API the base's flashinfer_sparse.py targets).
+RUN pip install --no-cache-dir --no-deps \
+      https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.14/flashinfer_python-0.6.14-py3-none-any.whl \
+      https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.14/flashinfer_cubin-0.6.14-py3-none-any.whl \
+      https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.14/flashinfer_jit_cache-0.6.14+cu130-cp39-abi3-manylinux_2_28_aarch64.whl && \
+    python3 -c "import flashinfer, inspect; from flashinfer.mla import _core; assert 'swa_topk_lens' in inspect.signature(_core.trtllm_batch_decode_sparse_mla_dsv4).parameters; print('flashinfer', flashinfer.__version__, 'sparse-MLA API OK')"
+
+# (4) cutlass 4.6.0's tvm-ffi AOT provider needs >=0.1.10; 0.1.12 breaks tilelang.
+RUN pip install --no-cache-dir --no-deps apache-tvm-ffi==0.1.11 tilelang==0.1.11 && \
+    python3 -c "import inspect; from tvm_ffi.utils.kwargs_wrapper import make_kwargs_wrapper; assert 'map_dataclass_to_tuple' in inspect.signature(make_kwargs_wrapper).parameters; import tilelang, tvm_ffi; print('tvm-ffi 0.1.11 + tilelang', tilelang.__version__, 'OK')"
+
+# (5) thin .py overlays.
+COPY overlay-deepseek-v4-gb10/vllm/ /usr/local/lib/python3.12/site-packages/vllm/
+
+# Smoke: the exact imports that break on the unpatched base.
+RUN python3 -c "\
+import vllm.models.deepseek_v4 as m; \
+import vllm.models.deepseek_v4.nvidia.ops.o_proj as o; \
+import inspect; assert '_sm12x' in inspect.getsource(o); \
+import vllm.model_executor.layers.sparse_attn_indexer as s; \
+assert 'has_device_capability(120)' in inspect.getsource(s); \
+import vllm.vllm_flash_attn.cute.utils as u; \
+assert '_nvvm_params' in inspect.getsource(u); \
+print('deepseek-v4-gb10 overlay smoke: OK')"
+ENTRYPOINT ["/bin/bash"]
