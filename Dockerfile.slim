@@ -1,0 +1,102 @@
+# AEON vLLM Ultimate — SLIM rebase of the validated v0.27.1 image.
+#
+# WHAT THIS IS: the shipped image userland (/usr/local: from-source CPython 3.12.13 +
+# the 242-package site-packages incl. vLLM, torch 2.13, the FlashInfer trio) lifted onto
+# a minimal CUDA base. 50.6 GB -> ~18.3 GB total, 21.4 GB -> ~8.2 GB compressed pull.
+#
+# WHY IT SHRINKS (measured, not guessed):
+#  - The old base (aeon-gemma-4-26b-a4b-dflash) carries a DEAD vLLM-0.20.1-era stack under
+#    layer whiteouts: ~28 GB of history that never appears at runtime but always downloads.
+#  - /usr/local/cuda-13.0 in the old image is ~4.3 GB of which ~3.8 GB is dead: 2.1 GB of
+#    static .a archives plus 1.7 GB of .so that EXACTLY duplicate the pip nvidia-* wheels.
+#    Proven via /proc/self/maps: torch resolves libcublas/libcudart/libnccl/libcudnn from
+#    site-packages/nvidia/*, never from /usr/local/cuda. Hence -base (383 MB) beats
+#    -runtime (2.52 GB) by another 2.1 GB.
+#
+# BASE CHOICE: nvidia/cuda:13.0.2-base-ubuntu22.04 (arm64).
+#  - jammy, NOT noble: the interpreter is a from-source CPython 3.12.13 at /usr/local built
+#    against glibc 2.35. Ubuntu 24.04 (glibc 2.39) would force a full native-wheel
+#    revalidation of all 242 packages for zero gain, and its distro python3.12 installs to
+#    /usr/bin with dist-packages — it would not even see our site-packages.
+#
+# JIT TOOLCHAIN IS LOAD-BEARING AT RUNTIME, so it is copied explicitly (247 MB):
+#  - ptxas: TRITON_PTXAS_PATH pins Triton to the toolkit copy (GB10 fix, upstream #32704).
+#  - nvcc + nvvm/cicc: flashinfer/jit drives nvcc for kernels absent from the cubin wheels,
+#    and torch/utils/cpp_extension references nvcc throughout.
+#  - -base and -runtime ship NEITHER; only libnvrtc.
+FROM ghcr.io/aeon-7/aeon-vllm-ultimate:2026-08-16-v0.27.1 AS donor
+
+FROM nvidia/cuda:13.0.2-base-ubuntu22.04 AS rt
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+      ca-certificates curl git gcc-12 g++-12 make ffmpeg \
+      libibverbs1 ibverbs-providers librdmacm1 libnuma1 numactl \
+      libsqlite3-0 libreadline8 libgdbm6 libbz2-1.0 liblzma5 libffi8 libssl3 zlib1g \
+      libncursesw6 libuuid1 libtirpc3 libnsl2 libexpat1 libgl1 libsm6 libxext6 \
+      procps sudo libgomp1 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# CUDA JIT toolchain (see header) — bin/ + nvvm/ + headers + driver stubs.
+COPY --from=donor /usr/local/cuda-13.0/bin/            /usr/local/cuda-13.0/bin/
+COPY --from=donor /usr/local/cuda-13.0/nvvm/           /usr/local/cuda-13.0/nvvm/
+COPY --from=donor /usr/local/cuda-13.0/targets/sbsa-linux/include/ /usr/local/cuda-13.0/targets/sbsa-linux/include/
+COPY --from=donor /usr/local/cuda-13.0/targets/sbsa-linux/lib/stubs/ /usr/local/cuda-13.0/targets/sbsa-linux/lib/stubs/
+
+# The userland: CPython 3.12.13 + all 242 site-packages (vLLM, torch, FlashInfer trio, ...).
+COPY --from=donor /usr/local/bin/     /usr/local/bin/
+COPY --from=donor /usr/local/include/ /usr/local/include/
+COPY --from=donor /usr/local/lib/     /usr/local/lib/
+COPY --from=donor /usr/local/share/   /usr/local/share/
+
+ENV PATH=/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/nvidia/lib
+ENV CC=gcc-12 CXX=g++-12 CUDAHOSTCXX=g++-12 TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
+ENV VLLM_ENABLE_CUDA_COMPATIBILITY=0 TORCH_CUDA_ARCH_LIST=12.1a ENABLE_NVFP4_SM100=0
+
+# Interpreter + toolchain aliases. The unversioned gcc/g++/cc/c++ names matter: Triton and
+# torch cpp_extension shell out to bare names at RUNTIME, and jammy ships none of them when
+# only gcc-12 is installed.
+RUN ln -sf /usr/local/bin/python3.12 /usr/local/bin/python3 && \
+    ln -sf /usr/local/bin/python3 /usr/local/bin/python && \
+    ln -sf /usr/local/bin/pip3.12 /usr/bin/pip && \
+    ln -sf /usr/local/bin/python3.12 /usr/bin/python3 && \
+    ln -sf /usr/bin/gcc-12 /usr/bin/gcc && ln -sf /usr/bin/g++-12 /usr/bin/g++ && \
+    ln -sf /usr/bin/gcc-12 /usr/bin/cc  && ln -sf /usr/bin/g++-12 /usr/bin/c++ && \
+    ldconfig
+
+# -base ships only libcudart under /usr/local/cuda, but ~1000 site-packages .so resolve
+# libcudart/libcublas/libnccl/libcudnn through ld.so.conf (not RPATH). Point the loader at
+# the pip wheel copies that torch actually uses.
+RUN printf "%s\n" \
+      /usr/local/lib/python3.12/site-packages/nvidia/cu13/lib \
+      /usr/local/lib/python3.12/site-packages/nvidia/cudnn/lib \
+      /usr/local/lib/python3.12/site-packages/nvidia/nccl/lib \
+      /usr/local/lib/python3.12/site-packages/nvidia/cusparselt/lib \
+      /usr/local/lib/python3.12/site-packages/nvidia/nvshmem/lib \
+      > /etc/ld.so.conf.d/000-pip-nvidia.conf && ldconfig
+
+RUN rm -rf /usr/local/lib/python3.12/test
+
+# Fail the build if any load-bearing organ did not survive the rebase.
+RUN python3 -VV && \
+    for b in python3 python pip vllm ninja nvcc ptxas gcc g++ cc c++ make ffmpeg; do \
+      command -v $b >/dev/null || { echo "MISSING BINARY: $b"; exit 1; }; done && \
+    nvcc --version | tail -1 && \
+    ldconfig -p | grep -q libcudart.so.13 || { echo "MISSING libcudart via ld.so.conf"; exit 1; }
+
+# Labels. The inherited set from the old base was stale (maintainer=NVIDIA, title still
+# naming the 2026-05 gemma-dflash image, version=22.04) — corrected here rather than carried.
+LABEL org.opencontainers.image.title="AEON vLLM Ultimate (slim)" \
+      org.opencontainers.image.description="AEON vLLM Ultimate - vLLM 0.27.1 built from source for DGX Spark / Blackwell (sm_121a/GB10). SLIM rebase: 18.3 GB vs 50.6 GB (8.2 GB compressed pull vs 21.4 GB), identical userland and gate results. DSpark quantized Markov heads, DFlash SWA on MRv2, Triton NVFP4-KV (NHD-safe), cross-node CUDA graphs validated for dual-Spark TP=2 over RoCE." \
+      org.opencontainers.image.source="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
+      org.opencontainers.image.documentation="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.vendor="AEON-7" \
+      org.opencontainers.image.version="0.27.1+aeon.sm121a.dspark" \
+      ai.aeon.vllm_base="vLLM 0.27.1 (from-source, sm_121a 3-way merge + 8 cherry-picks)" \
+      ai.aeon.hardware="NVIDIA DGX Spark GB10 SM121" \
+      ai.aeon.model="fleet: Gemma-4-26B-A4B, Gemma-4-31B-DECKARD (NVFP4_AWQ), Qwen3.6-27B, Qwen3.6-35B-A3B" \
+      ai.aeon.features="gemma4,qwen3.6,dflash,dflash-swa-mrv2,dspark,dspark-markov-heads,dspark-markov-quantized,dspark-topk,nvfp4,nvfp4-awq,nvfp4-kv,nvfp4-kv-nhd-safe,fp8-kv,hybrid-apc-fix,packed-kv-zeroer-fix,gdn-gate-align,flashinfer-0.6.16.post3,torch-2.13.0,triton-3.7.1,nccl-2.30.7,torchcodec-0.16.0,uma-clamp,thread-local-capture,tp2-crossnode-cudagraphs,turboquant,tool-calling,mrv2-default-routing,slim-base" \
+      ai.aeon.slim="rebased onto nvidia/cuda:13.0.2-base-ubuntu22.04 (arm64); 50.6GB->18.3GB"
+
+ENTRYPOINT ["/bin/bash"]

@@ -1,3 +1,43 @@
+## 2026-08-17 — SLIM image: 50.6 GB → 18.3 GB (`:2026-08-16-v0.27.1-slim`)
+
+Same vLLM build, same userland, same gate results — **32.3 GB smaller on disk and 13.2 GB smaller to
+pull** (21.4 GB → ~8.2 GB compressed). Built by `Dockerfile.slim`.
+
+- **Where the fat was.** Two places, both measured rather than guessed. (1) The inherited
+  `aeon-gemma-4-26b-a4b-dflash` base carried a **dead vLLM-0.20.1-era stack under layer whiteouts** —
+  bytes that never appear at runtime but download on every pull; the shipped image's *live* filesystem
+  was only ~22 GB of its 50.6 GB. (2) `/usr/local/cuda-13.0` was ~4.3 GB of which ~3.8 GB is dead:
+  2.1 GB of static `.a` archives plus 1.7 GB of `.so` that **exactly duplicate the pip `nvidia-*`
+  wheels**. Proven with `/proc/self/maps`: torch resolves libcublas/libcudart/libnccl/libcudnn from
+  `site-packages/nvidia/*`, never from `/usr/local/cuda`. A DT_NEEDED census over every native lib in
+  site-packages confirmed the pip wheels cover all CUDA-13 sonames.
+- **Base: `nvidia/cuda:13.0.2-base-ubuntu22.04` (arm64)** — 383 MB live. `-base` beats `-runtime`
+  (2.52 GB) by 2.1 GB precisely because of that duplication. **jammy, not noble:** the interpreter is a
+  from-source CPython 3.12.13 at `/usr/local` built against glibc 2.35; Ubuntu 24.04 (glibc 2.39) would
+  force a full revalidation of all 242 native wheels for zero gain, and its distro `python3.12` installs
+  to `/usr/bin` with `dist-packages` — it would not even see our site-packages.
+- **The JIT toolchain is load-bearing at runtime** and is copied explicitly (247 MB): `ptxas`
+  (`TRITON_PTXAS_PATH` pins Triton to the toolkit copy — GB10 fix #32704), plus `nvcc` + `nvvm/cicc`
+  (FlashInfer's JIT drives nvcc for kernels absent from the cubin wheels; torch `cpp_extension` needs it).
+  **Neither `-base` nor `-runtime` ships them** — only `libnvrtc`.
+- **`ld.so.conf` is required, not cosmetic:** ~1000 site-packages `.so` resolve `libcudart.so.13` &c.
+  through the loader path rather than RPATH, so `/etc/ld.so.conf.d/000-pip-nvidia.conf` points at the
+  pip wheel dirs.
+- **Five things that silently break a rebase** (each hit as a real failure during probing, not
+  theorized): `ENTRYPOINT ["/bin/bash"]`; the `/usr/bin/pip` + `/usr/bin/python3` symlinks; `ninja`;
+  the **unversioned** `gcc`/`g++`/`cc`/`c++`/`make` aliases (Triton and torch `cpp_extension` shell out
+  to bare names at runtime, and jammy ships none of them when only `gcc-12` is installed); and the OCI
+  labels. The build now **fails** if any load-bearing binary is missing.
+- **Validated:** `verify.py` GREEN, `nvfp4_kv_gate.py` PASSED (NHD + HND, 3 shapes each), full AEON
+  smoke battery (carries present, DSpark quantized Markov heads present, MRv2 routing intact), **and a
+  real serve** — Gemma-4-26B-A4B NVFP4 + DFlash n=10 booted, captured piecewise/full/dflash CUDA
+  graphs, and generated coherently.
+- Not a regression, pre-existing and identical in the shipped image: `nvidia-modelopt` is absent, and
+  the `deep_ep` extension fails its guarded import (stale vs the torch-2.13 ABI). Neither affects
+  single-node serving; rebuild `deep_ep` if EP across two Sparks is ever wanted.
+- Intermediate artifact kept for reference: `Dockerfile.multistage` (38.1 GB) builds vLLM as a wheel in
+  a discarded builder stage so the 11.5 GB of in-tree CMake objects never ship.
+
 ## 2026-08-17 — Cross-node CUDA graphs validated on dual-Spark TP=2 (no image change)
 
 Upstream [#46253](https://github.com/vllm-project/vllm/issues/46253) reports that multi-node GB10 clusters
