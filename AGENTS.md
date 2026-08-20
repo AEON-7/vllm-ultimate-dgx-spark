@@ -264,6 +264,101 @@ ENV TURBOQUANT_KV_BITS=4             # 4-bit K + 4-bit V
 ```
 
 Pair with `--gpu-memory-utilization 0.60` when ASR/TTS sidecars share the Spark, or raise cautiously only when the LLM is the dominant GPU workload. See [feedback_turboquant_cuda_graph_fix.md] for why the AEON-7 fork is required.
+## Variant: dual-Spark TP=2 over RoCE — with cross-node CUDA graphs
+
+Two DGX Sparks joined by a direct 200 GbE ConnectX cable serve one model split
+across both GPUs: **double the unified memory** (56.4 GiB pooled KV measured at
+`--max-model-len 65536`, vs ~35 GiB on one box) at **single-stream throughput
+parity**. TP=2 on Spark is a *capacity* play — the interconnect is ~9-10 GB/s
+host-staged (GB10 has no GPUDirect), so it buys headroom, not latency.
+
+> **Cross-node CUDA graphs work on this image.** Upstream
+> [#46253](https://github.com/vllm-project/vllm/issues/46253) reports multi-node
+> GB10 clusters must run `--enforce-eager`. This image carries the
+> [#48053](https://github.com/vllm-project/vllm/pull/48053) `thread_local`
+> capture-error-mode fix extended to **all five** `torch.cuda.graph` sites, and
+> with NCCL 2.30.7 + fusion off + custom-all-reduce off, capture **and** replay
+> are stable across nodes. Validated: 35 piecewise + 16 full + 15 DSpark graphs
+> captured, a 64-request / 19.5k-token soak, and a 6-cycle 8-way concurrent
+> burn-in with **zero** NCCL errors. Worth **+26% single-stream** (33.7 vs 26.7
+> tok/s) and **-23% TPOT** versus eager. If you hit instability on different
+> hardware, add `--enforce-eager` to both nodes to fall back.
+
+### 1) Fabric (once per boot — the addresses do not survive a reboot)
+
+```bash
+# node 0
+docker run --rm --net=host --cap-add NET_ADMIN busybox \
+  ip addr add 10.10.10.1/30 dev enp1s0f0np0
+# node 1
+docker run --rm --net=host --cap-add NET_ADMIN busybox \
+  ip addr add 10.10.10.2/30 dev enp1s0f0np0
+```
+
+Confirm the RoCE device is live and find your GID index (**3** = the IPv4-mapped
+RoCE v2 entry, which is what the `10.10.10.x` addresses use):
+
+```bash
+cat /sys/class/infiniband/rocep1s0f0/ports/1/state
+cat /sys/class/infiniband/rocep1s0f0/ports/1/gid_attrs/types/3
+```
+
+Substitute your own device/interface names — `ls /sys/class/infiniband/` and
+`ls /sys/class/infiniband/<dev>/device/net` map RDMA devices to netdevs.
+
+### 2) Node 0 — the API server
+
+```bash
+docker run -d --name tp2-node0 --gpus all --ipc=host --shm-size=16g --net=host \
+  -e VLLM_HOST_IP=10.10.10.1 \
+  -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \
+  -e NCCL_IB_HCA==rocep1s0f0:1 -e NCCL_IB_GID_INDEX=3 \
+  --device /dev/infiniband --cap-add IPC_LOCK --ulimit memlock=-1:-1 \
+  -v /models/YOUR-NVFP4-BODY:/model:ro \
+  -v /models/YOUR-DSPARK-DRAFTER:/dspark:ro \
+  --entrypoint vllm ghcr.io/aeon-7/aeon-vllm-ultimate:latest serve /model \
+    --served-model-name aeon --host 0.0.0.0 --port 8000 \
+    --tensor-parallel-size 2 --nnodes 2 --node-rank 0 \
+    --master-addr 10.10.10.1 --master-port 29501 \
+    --quantization compressed-tensors --kv-cache-dtype fp8_e4m3 \
+    --attention-backend TRITON_ATTN \
+    --max-model-len 65536 --max-num-seqs 16 --max-num-batched-tokens 16384 \
+    --gpu-memory-utilization 0.60 \
+    --disable-custom-all-reduce \
+    --enable-chunked-prefill --no-enable-prefix-caching \
+    --mamba-cache-mode align \
+    --speculative-config '{"method":"dspark","model":"/dspark","num_speculative_tokens":7}' \
+    --reasoning-parser qwen3 --tool-call-parser qwen3_coder --enable-auto-tool-choice \
+    --trust-remote-code
+```
+
+### 3) Node 1 — headless worker (start ~10 s later)
+
+Identical **engine** flags with `--headless`, `--node-rank 1`, and
+`VLLM_HOST_IP=10.10.10.2`. Omit the frontend flags (`--served-model-name`,
+`--host/--port`, and the parsers) — those are API-server-only.
+
+### 4) Confirm RDMA is actually in use
+
+```bash
+docker logs tp2-node0 2>&1 | grep -E "NET/IB|Using network"
+```
+
+You want `NCCL INFO NET/IB : Using [0]rocep1s0f0:1/RoCE`. If it says
+`NET/Socket`, NCCL fell back to TCP — recheck `NCCL_IB_HCA`, the GID index, and
+that `/dev/infiniband` is passed into **both** containers.
+
+**Notes**
+
+- `--disable-custom-all-reduce` is required: vLLM's custom all-reduce is a
+  single-node/NVLink path and is part of what destabilizes cross-node capture.
+- `--quantization` must match the checkpoint: `compressed-tensors` for
+  LLM-Compressor builds, `modelopt` for ModelOpt (`*-MO`) builds. The wrong
+  value fails at boot.
+- Both nodes need the model **and** the drafter on local disk at their own
+  paths; the mount points inside the containers must match.
+- Multi-node uses the `mp` backend natively — no Ray required.
+
 
 ## Health probes
 
