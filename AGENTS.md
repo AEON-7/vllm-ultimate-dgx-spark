@@ -65,7 +65,7 @@ Carried forward from earlier builds (see SOURCE.md for the full ledger):
 ## Pull
 
 ```bash
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest   # slim, ~8.2 GB pull
 # or pin the current build (vLLM 0.24.0 + AEON DFlash fixes)
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-01-v0.24.0
 # previous build kept for rollback
