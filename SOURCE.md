@@ -1,3 +1,36 @@
+## 2026-08-17 — Audio input support added (`:2026-08-17-v0.27.1-slim` = `:latest`, 18.5 GB)
+
+The image now ships vLLM's full `[audio]` extra, so **ASR/audio models work in this container** —
+Whisper, Qwen3-ASR, Qwen2-Audio, GLM-ASR, FunASR, Granite Speech, and the Omni families are all
+registered and now actually decodable. Vision and LLM behaviour are unchanged.
+
+- **What was missing, and why it hid.** `soundfile` was never installed in any historical image (vLLM
+  declares it under the optional `[audio]` extra), so audio requests failed. Adding `soundfile` +
+  `librosa` alone was **not enough** and produced a *false pass*: a 16 kHz test tone decoded fine, but
+  real 24 kHz speech returned a misleading `400 "Invalid or unsupported audio file."` The real
+  culprit was **`av` (PyAV)** — vLLM resamples through `resample_audio_pyav`, so without it only audio
+  *already at the model's native sample rate* works. The image now installs the complete extra:
+  **av, soundfile, soxr, scipy, mistral_common[audio]** (+ librosa).
+- **Gate that catches this class of bug.** An import check would have passed the broken build, so the
+  build now synthesizes a 24 kHz WAV and loads it through vLLM's own `load_audio()` asking for 16 kHz,
+  forcing a real resample: `audio resample gate OK: 24kHz -> 16000 Hz, 32000 samples`. Test the path,
+  not the import.
+- **Validated end-to-end:** the TTS sidecar generated 24 kHz speech, `Qwen3-ASR-0.6B` served on this
+  image transcribed it back as *"The quick brown fox jumps over the lazy dog."* — the exact request
+  that returned HTTP 400 before. Vision re-checked on Gemma-4-26B-A4B (correctly listed a red circle,
+  blue rectangle and green triangle from a real image).
+- **No LLM regression**, 4/4 fleet phases: Gemma DFlash MAL 3.00-3.11 @20-21%; Qwen DFlash MAL
+  3.38-4.41 @20-28% (KV cache **547,729 tokens — identical to the digit** vs the pre-audio slim image);
+  DSpark Markov MAL 3.03-4.54 @14-24%; NVFP4-KV 1,026,730 KV tokens + coherent generation. Audio libs
+  are CPU-side decode only and touch nothing on the GPU path.
+- **TTS is still NOT possible in vLLM**, with or without an Omni model: vLLM implements only the
+  Omni *Thinker* (`qwen3_omni_moe_thinker.py`) and explicitly skips the synthesis weights
+  (`skip_prefixes=["talker.", "code2wav."]`). vLLM generates tokens; a vocoder is a different
+  computation. Keep a TTS sidecar. Omni models remain attractive for collapsing **LLM + ASR** into one
+  weight set.
+- Size cost of the whole audio axis: **+0.2 GB** (18.3 → 18.5 GB). Rollback: `:2026-08-16-v0.27.1-slim`
+  (no audio) or `:2026-08-16-v0.27.1` (the 50.6 GB original).
+
 ## 2026-08-17 — SLIM image: 50.6 GB → 18.3 GB (`:2026-08-16-v0.27.1-slim`)
 
 Same vLLM build, same userland, same gate results — **32.3 GB smaller on disk and 13.2 GB smaller to

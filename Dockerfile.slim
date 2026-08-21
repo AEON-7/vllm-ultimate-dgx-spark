@@ -33,6 +33,7 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
       libibverbs1 ibverbs-providers librdmacm1 libnuma1 numactl \
       libsqlite3-0 libreadline8 libgdbm6 libbz2-1.0 liblzma5 libffi8 libssl3 zlib1g \
       libncursesw6 libuuid1 libtirpc3 libnsl2 libexpat1 libgl1 libsm6 libxext6 \
+      libsndfile1 \
       procps sudo libgomp1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -77,12 +78,25 @@ RUN printf "%s\n" \
 
 RUN rm -rf /usr/local/lib/python3.12/test
 
+# Audio input support = vLLM's full [audio] extra: av, soundfile, soxr, scipy,
+# mistral_common[audio] (+ librosa). NOTE av (PyAV) is NOT optional: vLLM resamples through
+# resample_audio_pyav, so without it ONLY audio already at the model's native sample rate
+# decodes -- anything else fails with a misleading 'Invalid or unsupported audio file'.
+RUN pip install --no-cache-dir av soundfile soxr librosa "mistral_common[audio]" 2>&1 | tail -2 \
+    && python3 -c "import av, soundfile, soxr, librosa; print('audio libs:', av.__version__, soundfile.__libsndfile_version__, librosa.__version__)"
+
+# Gate the REAL decode path, not just imports: synthesize a 24 kHz WAV and load it through
+# vLLM's own loader asking for 16 kHz, which forces a resample. This is the exact case that
+# silently failed when av was missing.
+RUN python3 -c "import numpy as np, soundfile as sf, io; from vllm.multimodal.media.audio import load_audio; buf=io.BytesIO(); sig=np.sin(np.arange(24000*2)*0.02).astype('float32'); sf.write(buf, sig, 24000, format='WAV'); buf.seek(0); y,sr=load_audio(buf, sr=16000); assert sr==16000 and len(y)>15000, (sr, len(y)); print('audio resample gate OK: 24kHz ->', sr, 'Hz,', len(y), 'samples')"
+
 # Fail the build if any load-bearing organ did not survive the rebase.
 RUN python3 -VV && \
     for b in python3 python pip vllm ninja nvcc ptxas gcc g++ cc c++ make ffmpeg; do \
       command -v $b >/dev/null || { echo "MISSING BINARY: $b"; exit 1; }; done && \
     nvcc --version | tail -1 && \
-    ldconfig -p | grep -q libcudart.so.13 || { echo "MISSING libcudart via ld.so.conf"; exit 1; }
+    ldconfig -p | grep -q libcudart.so.13 || { echo "MISSING libcudart via ld.so.conf"; exit 1; } \
+    && python3 -c "import soundfile,librosa,torchcodec,cv2,PIL,torchaudio; from torchcodec.decoders import VideoDecoder,AudioDecoder; print('multimodal organs OK')"
 
 # Labels. The inherited set from the old base was stale (maintainer=NVIDIA, title still
 # naming the 2026-05 gemma-dflash image, version=22.04) — corrected here rather than carried.
