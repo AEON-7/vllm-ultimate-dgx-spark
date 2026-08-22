@@ -419,6 +419,85 @@ docker start aeon-vllm
 # See reference_spark_service_stack.md
 ```
 
+## Appendix: vLLM-Omni (speech synthesis) — experimental
+
+Upstream vLLM generates tokens, not waveforms, so it cannot synthesize speech: it loads the
+Qwen-Omni *Thinker* only and explicitly skips the synthesis weights
+(`skip_prefixes=["talker.", "code2wav."]`). Speech output lives in
+[`vllm-project/vllm-omni`](https://github.com/vllm-project/vllm-omni), an official **extension**
+(not a fork) that runs Qwen3-Omni as three vLLM stages: Thinker → Talker → Code2Wav.
+
+**It layers onto this image without disturbing it.** `vllm-omni==0.27.0rc1` is rebased onto vLLM
+0.27.0, pins **no** vllm version, is pure Python (no CUDA build), and its deps are already satisfied
+here. Verified: `pip install vllm-omni==0.27.0rc1` adds ~0.3 GB, touches neither vllm nor torch nor
+transformers, and leaves every AEON carry intact.
+
+### ⚠️ It auto-patches vLLM unless you gate it
+
+vllm-omni registers a `vllm.general_plugins` entry point, so vLLM **auto-loads it on every serve** —
+including ordinary LLM serving. Three monkeypatches install themselves, one of which touches the
+NVFP4 path the whole fleet uses:
+
+```
+NVFP4 W4A4 weight_scale NaN-clamp: installed.
+inductor factorable-divisibility patch: installed.
+[cumem-cuda] CuMemAllocator._python_free_callback patched
+```
+
+For normal fleet serving, gate it off — one image can then serve both roles:
+
+```bash
+-e VLLM_PLUGINS=          # omni plugin disabled; behaviour identical to stock :latest
+```
+
+Verified: with `VLLM_PLUGINS=` the patches do not load (`0` occurrences) and Gemma-4-26B DFlash
+returns MAL 2.92–3.57 with KV 1,217,228 tokens — matching the non-omni image.
+
+### `--stage-overrides`: required on a single GPU, useful on many
+
+The bundled deploy config (`vllm_omni/deploy/qwen3_omni_moe.yaml`) is **multi-GPU by default**:
+
+| Stage | Component | Default device |
+|---|---|---|
+| 0 | Thinker | `"0"` |
+| 1 | Talker | `"1"` |
+| 2 | Code2Wav | `"1"` |
+
+On a **single-GPU** box (one DGX Spark) stages 1–2 target a device that does not exist, and the
+launch dies with a misleading `pynvml.NVMLError_InvalidArgument` from
+`nvmlDeviceGetHandleByIndex()` — it is an invalid *device index*, not the well-known GB10
+unified-memory NVML limitation. Pin every stage to GPU 0:
+
+```bash
+vllm serve /model --omni --port 9000 --trust-remote-code \
+  --stage-overrides '{"1": {"devices": "0"}, "2": {"devices": "0"}}'
+```
+
+Conversely, to **spread** Thinker and Talker across GPUs (or scale the speech stages out), override
+in the other direction — this is the intended use on multi-GPU hosts:
+
+```bash
+# talker + code2wav on their own GPUs, 2 replicas each
+--stage-overrides '{"1": {"num_replicas": 2, "devices": "1,2"},
+                    "2": {"num_replicas": 2, "devices": "1,2"}}'
+```
+
+A custom YAML can replace the bundled config entirely with `--deploy-config /path/to/config.yaml`,
+and stages can be launched as separate processes with `--stage-id` / `--omni-master-address` /
+`--omni-master-port` (see the vLLM-Omni `examples/online_serving/qwen3_omni` README).
+
+### Status on DGX Spark
+
+- ✅ Installs cleanly; AEON carries intact; fleet serving unaffected when gated
+- ✅ `--stage-overrides` resolves the single-GPU device-index failure; Thinker **and** Talker stages start
+- ❌ **Speech output not yet working here.** The Talker fails loading MoE experts
+  (`expert_data.copy_()`, tensor 192 vs 384 — the factor-of-2 NVFP4 packing signature). The local
+  26 GB Qwen3-Omni checkpoint was prepared for vllm-omni **0.18.1** with stage-prefixed weight names;
+  0.27.0rc1 expects the stock layout. Resolving it means either using an official Qwen3-Omni
+  checkpoint or re-preparing the local weights — not a serve flag.
+
+Until then, speech output stays with the separate Qwen3-TTS sidecar.
+
 ## What this container does NOT do
 
 - Does **not** include the Qwen3-ASR or Qwen3-TTS sidecars — see `qwen3-asr` and `qwen3-tts` images separately.
