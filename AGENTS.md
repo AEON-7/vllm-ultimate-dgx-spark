@@ -7,7 +7,7 @@ Blackwell host.
 
 > **Note**: The entire AEON fleet — **Qwen3.6-27B**, **Qwen3.6-35B-A3B**, and
 > **Gemma-4-26B-A4B** — is now unified onto this single image,
-> `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` (= `:2026-07-01-v0.24.0`;
+> `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` (= `:2026-08-24-v0.27.1-omni`;
 > rollback `:2026-06-18-v0.23.0-dflashfix`), served with **DFlash
 > `num_speculative_tokens: 12`**. The old lineage (`omni-q36`, `vllm-spark-*`,
 > `aeon-gemma-4-26b-a4b-dflash`, `vllm-aeon-ultimate-*`, `vllm-dflash`) is
@@ -28,7 +28,7 @@ A from-source build of **vLLM v0.27.1** (compiled for sm_121a) that:
   scripts. Re-pin `=0` per-service ONLY if you use `thinking_token_budget`
   (V2 silently ignores it).
 - torch 2.13.0+cu130 / Triton 3.7.1 / FlashInfer 0.6.16.post3 (exact
-  python+cubin+jit-cache trio) / NCCL 2.30.7 / transformers 5.14.1 /
+  python+cubin+jit-cache trio) / NCCL 2.29.7 / transformers 5.14.1 /
   torchcodec 0.16.0 (video decode is back).
 
 Carried forward from earlier builds (see SOURCE.md for the full ledger):
@@ -66,10 +66,10 @@ Carried forward from earlier builds (see SOURCE.md for the full ledger):
 
 ```bash
 docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:latest   # slim, ~8.2 GB pull
-# or pin the current build (vLLM 0.24.0 + AEON DFlash fixes)
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-07-01-v0.24.0
-# previous build kept for rollback
-docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-06-18-v0.23.0-dflashfix
+# or pin the current build (vLLM 0.27.1 + omni stack + DFlash 2)
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-08-24-v0.27.1-omni
+# previous build kept for rollback (no omni, no DFlash 2)
+docker pull ghcr.io/aeon-7/aeon-vllm-ultimate:2026-08-17-v0.27.1-slim
 ```
 
 ## Verify the image is healthy before serving
@@ -208,7 +208,7 @@ docker run -d --name aeon-vllm-dspark \
     --gpu-memory-utilization 0.60 \
     --enable-chunked-prefill \
     --mamba-cache-mode align \
-    --speculative-config '{"method":"dspark","model":"/dspark","num_speculative_tokens":15}' \
+    --speculative-config '{"method":"dspark","model":"/dspark","num_speculative_tokens":15,"attention_backend":"TRITON_ATTN"}' \
     --trust-remote-code
 ```
 
@@ -264,6 +264,65 @@ ENV TURBOQUANT_KV_BITS=4             # 4-bit K + 4-bit V
 ```
 
 Pair with `--gpu-memory-utilization 0.60` when ASR/TTS sidecars share the Spark, or raise cautiously only when the LLM is the dominant GPU workload. See [feedback_turboquant_cuda_graph_fix.md] for why the AEON-7 fork is required.
+## B5 — Qwen3.8-27B + DFlash 2 (fastest single-node recipe measured)
+
+DFlash 2 beat MTP, DSpark and DFlash v1 at **every** concurrency level on
+Qwen3.8-27B. Requires an image carrying the [#52816](https://github.com/vllm-project/vllm/pull/52816)
+cherry-pick — `:2026-08-24-v0.27.1-omni` or newer. The drafter is
+[`incoai/Qwen3.8-27B-DFlash2`](https://huggingface.co/incoai/Qwen3.8-27B-DFlash2)
+(`z-lab/Qwen3.8-27B-DFlash2` is a mirror), block_size 8.
+
+```bash
+docker run -d --name aeon-vllm-dflash2 \
+  --gpus all --ipc=host --shm-size=16g --net=host \
+  -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
+  -v /models/Qwen3.8-27B-AEON-ULTIMATE-UNCENSORED-NVFP4-GDNFP8-LLMC:/model:ro \
+  -v /models/Qwen3.8-27B-DFlash2:/drafter:ro \
+  --entrypoint vllm ghcr.io/aeon-7/aeon-vllm-ultimate:latest \
+  serve /model \
+    --served-model-name aeon \
+    --quantization compressed-tensors \
+    --kv-cache-dtype fp8_e4m3 \
+    --attention-backend TRITON_ATTN \
+    --max-model-len 16384 \
+    --max-num-seqs 64 \
+    --max-num-batched-tokens 16384 \
+    --gpu-memory-utilization 0.75 \
+    --enable-chunked-prefill --no-enable-prefix-caching \
+    --compilation-config '{"cudagraph_mode":"FULL_AND_PIECEWISE"}' \
+    --speculative-config '{"method":"dflash","model":"/drafter","num_speculative_tokens":7,"attention_backend":"TRITON_ATTN"}' \
+    --trust-remote-code
+```
+
+**Measured** (6 prompt categories x c in {1,8,16,32,64}, fp8 KV, util 0.75):
+
+| n | c=1 | c=8 | c=16 | c=32 | c=64 |
+|---|---|---|---|---|---|
+| baseline (no drafter) | 11 | 67 | 118 | 196 | 296 |
+| MTP n=3 | 20 | 113 | 184 | 284 | 377 |
+| **DFlash2 n=3** | 24 | 126 | 209 | 315 | **416** |
+| DFlash2 n=5 | 33 | 128 | **222** | 313 | 345 |
+| **DFlash2 n=7** | **37** | **144** | 212 | 307 | 322 |
+
+*(aggregate tok/s, mean across categories)*
+
+**Pick `n` against your concurrency target.** High `n` wins interactive
+single-stream (**3.39x** at c=1); low `n` wins batch (**1.41x** at c=64). The
+reason is KV, not acceptance: the drafter's footprint caps how many sequences
+fit, so `n=7` leaves only 464,675 KV tokens (28.4x engine max concurrency)
+against 1,521,371 (92.9x) with no drafter at all.
+
+**Two things that fail silently:**
+
+1. `attention_backend` **must** be inside `--speculative-config`. A top-level
+   `--attention-backend TRITON_ATTN` does not reach the draft path; FlashInfer
+   gets picked there and vLLM logs `setting cudagraph_mode=PIECEWISE`, costing
+   you every FULL graph with no error. Healthy signature: **6 FULL + 13 PIECEWISE**.
+2. **DFlash 2 and >262K context are mutually exclusive.** The drafter builds its
+   rope cache from its own config (262,144 rows), so a longer prompt asserts
+   `index out of bounds: ... < 262144` and takes down the engine. Serve 1M
+   *without* a drafter, or cap `--max-model-len 262144` and keep it.
+
 ## Variant: dual-Spark TP=2 over RoCE — with cross-node CUDA graphs
 
 Two DGX Sparks joined by a direct 200 GbE ConnectX cable serve one model split
@@ -277,7 +336,7 @@ host-staged (GB10 has no GPUDirect), so it buys headroom, not latency.
 > GB10 clusters must run `--enforce-eager`. This image carries the
 > [#48053](https://github.com/vllm-project/vllm/pull/48053) `thread_local`
 > capture-error-mode fix extended to **all five** `torch.cuda.graph` sites, and
-> with NCCL 2.30.7 + fusion off + custom-all-reduce off, capture **and** replay
+> with NCCL **2.29.7** (no 2.30.x floor) + fusion off + custom-all-reduce off, capture **and** replay
 > are stable across nodes. Validated: 35 piecewise + 16 full + 15 DSpark graphs
 > captured, a 64-request / 19.5k-token soak, and a 6-cycle 8-way concurrent
 > burn-in with **zero** NCCL errors. Worth **+26% single-stream** (33.7 vs 26.7
@@ -327,7 +386,7 @@ docker run -d --name tp2-node0 --gpus all --ipc=host --shm-size=16g --net=host \
     --disable-custom-all-reduce \
     --enable-chunked-prefill --no-enable-prefix-caching \
     --mamba-cache-mode align \
-    --speculative-config '{"method":"dspark","model":"/dspark","num_speculative_tokens":7}' \
+    --speculative-config '{"method":"dspark","model":"/dspark","num_speculative_tokens":7,"attention_backend":"TRITON_ATTN"}' \
     --reasoning-parser qwen3 --tool-call-parser qwen3_coder --enable-auto-tool-choice \
     --trust-remote-code
 ```
@@ -508,7 +567,7 @@ Until then, speech output stays with the separate Qwen3-TTS sidecar.
 ## License + provenance
 
 - vLLM Apache-2.0, PyTorch BSD-3-Clause, TurboQuant Apache-2.0, AEON patches MIT.
-- Source: **vLLM v0.23.0 compiled from source for sm_121a** (`TORCH_CUDA_ARCH_LIST=12.1a`) as a 3-way merge that preserves the AEON spec-decode tree; carries open upstream PRs #44389 (Triton NVFP4 KV), #40898 (DFlash SWA), #41703 (Gemma-4 DFlash prefix-cache-safe) plus the in-tree DFlash high-concurrency fix (port of PR #43982). The earlier `:2026-06-04-pr44389` build pinned [`lesj0610/vllm@lesj/triton-nvfp4-kv-fork-20260602`](https://github.com/lesj0610/vllm/tree/lesj/triton-nvfp4-kv-fork-20260602) commit `e8c77b85` (historical).
+- Source: **vLLM v0.27.1 compiled from source for sm_121a** (`TORCH_CUDA_ARCH_LIST=12.1a`) as a 3-way merge that preserves the AEON spec-decode tree; carries open upstream PRs #44389 (Triton NVFP4 KV), #40898 (DFlash SWA), #41703 (Gemma-4 DFlash prefix-cache-safe) plus the in-tree DFlash high-concurrency fix (port of PR #43982). The earlier `:2026-06-04-pr44389` build pinned [`lesj0610/vllm@lesj/triton-nvfp4-kv-fork-20260602`](https://github.com/lesj0610/vllm/tree/lesj/triton-nvfp4-kv-fork-20260602) commit `e8c77b85` (historical).
 - Patches + Dockerfile: [`AEON-7/vllm-ultimate-dgx-spark`](https://github.com/AEON-7/vllm-ultimate-dgx-spark).
 
 ## Support the work
