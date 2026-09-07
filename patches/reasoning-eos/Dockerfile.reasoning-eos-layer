@@ -1,0 +1,18 @@
+# Thin Python overlay: mid-think EOS force_end (#55420 / PR #55562 backport)
+# + fold #54367 modelopt MIXED_PRECISION dispatch (drop bind-mount).
+FROM ghcr.io/aeon-7/aeon-vllm-ultimate:2026-08-24-v0.27.1-omni
+LABEL aeon.layer="reasoning-eos-force-end+modelopt-54367" \
+      aeon.base="2026-08-24-v0.27.1-omni" \
+      aeon.upstream="vllm-project/vllm#55420 / PR#55562 @ d91bb5c0" \
+      aeon.default="reasoning_eos_policy=force_end"
+COPY overlay/vllm/ /usr/local/lib/python3.12/site-packages/vllm/
+RUN python3 -c "\
+from vllm.sampling_params import SamplingParams, validate_reasoning_eos_policy; \
+assert validate_reasoning_eos_policy(None)=='force_end'; \
+assert SamplingParams().reasoning_eos_policy=='force_end'; \
+from vllm.v1.sample.thinking_budget_state import ThinkingBudgetStateHolder; \
+assert hasattr(ThinkingBudgetStateHolder, '_apply_eos_policy_to_logits'); \
+from vllm.model_executor.layers.quantization import modelopt as mo; \
+import inspect; src=inspect.getsource(mo); \
+assert 'FP8_PER_CHANNEL_PER_TOKEN' in src or 'PER_CHANNEL_PER_TOKEN' in src; \
+print('overlay smoke: reasoning_eos_policy + modelopt OK')"
