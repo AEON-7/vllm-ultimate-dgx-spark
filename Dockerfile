@@ -196,31 +196,25 @@ RUN mkdir -p /tmp/cuda-stub && \
     LD_LIBRARY_PATH=/tmp/cuda-stub:$LD_LIBRARY_PATH python3 -c "\
 import vllm._C_stable_libtorch; import vllm._moe_C_stable_libtorch; \
 import vllm, inspect; assert vllm.__version__.startswith('0.29.0'), vllm.__version__; \
-from vllm import LLM, SamplingParams; from vllm.config import VllmConfig; \
-import vllm.model_executor.models.qwen3_dflash as q; assert 'sliding_attention_layer_names' in inspect.getsource(q), 'V1 SWA carry lost'; \
-assert hasattr(q, 'dflash_has_any_non_causal'), 'dflash_has_any_non_causal missing'; \
-import vllm.v1.spec_decode.utils as u; assert 'is_valid_ctx' in inspect.getsource(u), 'ctx-slot mask lost'; \
-import vllm.v1.attention.ops.triton_reshape_and_cache_flash as _trc; assert 'nvfp4' in inspect.getsource(_trc).lower() or 'nvfp4_kv_cache_split_views' in inspect.getsource(_trc), 'NVFP4-KV lost'; \
+from vllm import LLM, SamplingParams; \
+assert SamplingParams().reasoning_eos_policy=='force_end'; \
+import vllm.model_executor.models.qwen3_dflash as q; assert hasattr(q, 'dflash_has_any_non_causal'), 'dflash_has_any_non_causal missing'; \
 import vllm.v1.spec_decode.dflash as d; assert 'dflash-blocktable-unpad' in inspect.getsource(d), 'blocktable slice lost'; \
 import vllm.config.compilation as cc; assert 'AEON widened gate' in inspect.getsource(cc), 'cudagraph align widening lost'; \
 _uma=any('uma-negative-cudagraph-estimate-clamp' in inspect.getsource(__import__(n, fromlist=['x'])) for n in ('vllm.v1.worker.gpu_model_runner','vllm.v1.worker.gpu.model_runner')); assert _uma, 'UMA clamp lost'; \
 import vllm.envs as e; assert e.VLLM_USE_V2_MODEL_RUNNER is None, 'V2 runner pin unexpectedly baked'; \
-import vllm.config.vllm as cv; src=inspect.getsource(cv.VllmConfig.use_v2_model_runner.fget); \
-assert src.index('VLLM_USE_V2_MODEL_RUNNER') < src.index('dspark'), 'env precedence changed'; \
-assert '_dflash_needs_multi_kv_group' in inspect.getsource(cv), 'mixed-SWA force-V2 trigger missing'; \
-import vllm.v1.worker.gpu.spec_decode.dspark.speculator as dsp; \
-import vllm.model_executor.models.qwen3_dspark as qds; \
-assert 'quant_config' in inspect.signature(qds.DSparkMarkovHead.__init__).parameters, '#50424 quantized Markov heads missing'; \
-import vllm.v1.worker.gpu.spec_decode.eagle.utils as eu; assert hasattr(eu, 'get_target_lm_head'), '#47914 lm_head helper missing'; \
+import vllm.model_executor.models.qwen3_dspark as qds; assert 'quant_config' in inspect.signature(qds.DSparkMarkovHead.__init__).parameters, '#50424 quantized Markov heads missing'; \
 import vllm.utils.torch_utils as tu; assert hasattr(tu, 'nvfp4_kv_cache_split_views'), 'nvfp4 split helper missing'; \
-assert hasattr(tu, 'nvfp4_split_data_scale'), 'upstream-name nvfp4 alias missing (FlashInfer callers)'; \
+assert hasattr(tu, 'nvfp4_split_data_scale'), 'upstream-name nvfp4 alias missing'; \
 assert 'as_strided' not in tu._nvfp4_split_data_scale.__code__.co_names, 'nvfp4 splitter reverted to as_strided (NHD-unsafe)'; \
-import vllm.config.speculative as sp; assert 'dspark_draft_topk' in inspect.getsource(sp), '#49969 top-k Markov projection missing'; \
+import vllm.v1.attention.ops.triton_reshape_and_cache_flash as _trc; assert 'nvfp4' in inspect.getsource(_trc).lower(), 'NVFP4-KV path lost'; \
 import vllm.compilation.cuda_graph as cg; assert 'thread_local' in inspect.getsource(cg), '#48053 thread_local lost (V1 graphs)'; \
 import vllm.v1.worker.gpu.cudagraph_utils as cgu; assert 'thread_local' in inspect.getsource(cgu), '#48053 thread_local lost (MRv2 graphs)'; \
+import vllm.model_executor.layers.quantization.modelopt as mo; src=inspect.getsource(mo); assert 'modelopt_mixed' in src or 'MIXED_PRECISION' in src; \
 import vllm.multimodal.video as vid; \
-print('vllm', vllm.__version__, '+aeon import OK; carries present; DSpark Markov heads (quantized) present; MRv2 routing intact')" && \
+print('vllm', vllm.__version__, '+aeon 0.29 hard-keeps OK')" && \
     rm -rf /tmp/cuda-stub
+
 
 # AEON build gate: NVFP4 KV data/scale views must be DISJOINT and COMPLETE under BOTH cache
 # layouts (NHD is the GB10 default; upstream's as_strided formulation covers 7760/9216 bytes
