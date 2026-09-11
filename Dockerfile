@@ -1,13 +1,13 @@
-# Ultimate vLLM image for DGX Spark (GB10 / sm_121a) — v0.27.1 base
-# - Source: vLLM v0.27.1 (= v0.27.0 + #50424 quantized DSpark Markov heads) 3-way merged onto
+# Ultimate vLLM image for DGX Spark (GB10 / sm_121a) — v0.29.0 base
+# - Source: vLLM v0.29.0 (= v0.27.0 + #50424 quantized DSpark Markov heads) 3-way merged onto
 #     the AEON tree (aeon-v0.26.0). Only 7 conflicts this cycle. Post-merge cherry-picks
-#     (correctness-first, all merged upstream, none in the v0.27.1 tag): #50276 packed-KV
+#     (correctness-first, all merged upstream, none in the v0.29.0 tag): #50276 packed-KV
 #     zeroer stride (critical under our NHD packed NVFP4-KV), #51812 GDN gate alignment with
 #     spec tokens (Qwen3.6+DFlash), #51843 hybrid-KV fine-grained prefix-cache fix, DSpark set
-#     #51602/#50693/#52288/#50910/#49969. SKIPPED #47808/#52436 (depend on post-0.27.1 MRv2
+#     #51602/#50693/#52288/#50910/#49969. SKIPPED #47808/#52436 (depend on post-0.29.0 MRv2
 #     refactors; arrive with v0.27.2). SKIPPED #49718 XQA (accuracy regression measured on Spark).
 # - V1 PIN REMOVED: VLLM_USE_V2_MODEL_RUNNER is NO LONGER BAKED. DSpark is MRv2-only and
-#     v0.27.1 hard-raises rather than falling back; mixed sliding/full DFlash drafters (all
+#     v0.29.0 hard-raises rather than falling back; mixed sliding/full DFlash drafters (all
 #     z-lab fleet drafters: 4-sliding+1-full) now auto-force MRv2 where upstream #47914/#48113
 #     handle SWA natively via multi-KV-groups. Fleet spec decode therefore runs on MRv2 by
 #     routing, with our V1 carries kept as a fallback tree (re-pin per-service with
@@ -21,7 +21,7 @@
 #     cross-node). Dropped (now upstream): #43982 port, #50065, #49659.
 # - Deps vs v0.26.0 image: torch 2.11.0 -> 2.13.0+cu130 (breaking env change #48155; brings
 #     Triton 3.7.1 + torchvision 0.28.0; torchaudio stays 2.11.0 like upstream), FlashInfer
-#     0.6.14 -> 0.6.16.post3 as an exact python+cubin+jit-cache TRIO (jit-cache aarch64 wheel
+#     0.6.14 -> 0.6.18 as an exact python+cubin+jit-cache TRIO (jit-cache aarch64 wheel
 #     now exists on flashinfer.ai/whl/cu130), apache-tvm-ffi 0.1.10 -> 0.1.11, quack-kernels
 #     ==0.6.1 EXACT (0.6.2+ untested by upstream CI), cutlass-dsl 4.6.0 UNCHANGED (quack 0.6.1
 #     hard-pins it; do NOT bump to 4.7), tilelang 0.1.12 (new hard dep), transformers 5.12.1 ->
@@ -43,10 +43,11 @@ ENV PIP_RETRIES=5
 ENV CMAKE_BUILD_PARALLEL_LEVEL=8
 ENV MAX_JOBS=12
 ENV NVCC_THREADS=2
-ENV SETUPTOOLS_SCM_PRETEND_VERSION="0.27.1+aeon.sm121a.dspark"
-ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM="0.27.1+aeon.sm121a.dspark"
+ENV SETUPTOOLS_SCM_PRETEND_VERSION="0.29.0+aeon.sm121a.dspark"
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_VLLM="0.29.0+aeon.sm121a.dspark"
 # GB10: Triton must use the CUDA-toolkit ptxas, not its bundled one (#32704).
 ENV TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas
+ENV VLLM_ALLREDUCE_USE_FLASHINFER=0
 # NOTE: VLLM_USE_V2_MODEL_RUNNER deliberately NOT set (see header).
 
 WORKDIR /build
@@ -84,7 +85,7 @@ RUN update-alternatives --set cuda /usr/local/cuda-13.0 2>/dev/null || true; \
 
 # torch 2.13.0+cu130 BEFORE the vLLM build (v0.27.x pin; "breaking environment change"
 # per upstream #48155). Pulls Triton 3.7.1 + matched torchvision. torchaudio stays at the
-# base's 2.11.0 — upstream v0.27.1 pins torchaudio==2.11.0 alongside torch 2.13 (last
+# base's 2.11.0 — upstream v0.29.0 pins torchaudio==2.11.0 alongside torch 2.13 (last
 # published torchaudio); do NOT try to bump it.
 RUN pip install --no-cache-dir "torch==2.13.0" "torchvision==0.28.0" \
         --index-url https://download.pytorch.org/whl/cu130 2>&1 | tail -4 && \
@@ -94,7 +95,7 @@ RUN pip install --no-cache-dir "torch==2.13.0" "torchvision==0.28.0" \
       assert triton.__version__.startswith('3.7'), triton.__version__; \
       print('torch', torch.__version__, '| triton', triton.__version__, '| torchaudio', torchaudio.__version__)"
 
-# NCCL: match upstream v0.27.1 (2.30.7); the TP=2 dual-Spark floor is 2.30.4 (issue #52504).
+# NCCL: match upstream v0.29.0 (2.30.7); the TP=2 dual-Spark floor is 2.30.4 (issue #52504).
 RUN pip install --no-cache-dir "nvidia-nccl-cu13==2.30.7" 2>&1 | tail -2 && \
     python3 -c "import importlib.metadata as m; v=m.version('nvidia-nccl-cu13'); assert v=='2.30.7', v; print('nccl', v)"
 
@@ -104,7 +105,7 @@ RUN pip uninstall -y vllm 2>&1 | tail -3
 
 WORKDIR /build/vllm-src
 # Build WITHOUT pip build isolation: the isolated env re-downloads a multi-GB torch
-# from PyPI (read-timeout-prone — killed the first 0.27.1 build) and can ABI-drift from
+# from PyPI (read-timeout-prone — killed the first 0.29.0 build) and can ABI-drift from
 # our installed 2.13.0+cu130. use_existing_torch.py is vLLM's supported flow for building
 # against a preinstalled torch; build deps are provided in-image instead (base already
 # ships ninja/packaging/setuptools<81/setuptools-scm/jinja2; rust ext never compiles on
@@ -115,32 +116,32 @@ RUN CUDA_HOME=/usr/local/cuda-13.0 PATH=/usr/local/cuda-13.0/bin:$PATH \
     pip install --no-deps --no-build-isolation -v . 2>&1 | tee /tmp/vllm-install.log | tail -120 && \
     echo "[vllm pip install] exit=$?"
 
-# Matched trio + tilelang (v0.27.1 pins): cutlass-dsl 4.6.0 (quack 0.6.1 hard-pins it),
+# Matched trio + tilelang (v0.29.0 pins): cutlass-dsl 4.6.0 (quack 0.6.1 hard-pins it),
 # quack-kernels ==0.6.1 EXACT, apache-tvm-ffi 0.1.11, tilelang 0.1.12 (new cuda.txt hard dep:
 # DSv4 mHC TileLang warmup imports it).
-RUN pip install --no-cache-dir "nvidia-cutlass-dsl[cu13]==4.6.0" "quack-kernels==0.6.1" \
+RUN pip install --no-cache-dir "nvidia-cutlass-dsl[cu13]==4.6.2" "quack-kernels==0.6.4" \
         "apache-tvm-ffi==0.1.11" "tilelang==0.1.12" 2>&1 | tail -3 && \
     python3 -c "import importlib.metadata as m; \
       c=m.version('nvidia-cutlass-dsl'); q=m.version('quack-kernels'); t=m.version('apache-tvm-ffi'); \
       print('cutlass-dsl:', c, '| quack:', q, '| tvm-ffi:', t, '| tilelang:', m.version('tilelang')); \
-      assert c.startswith('4.6'), c; assert q=='0.6.1', q; assert t=='0.1.11', t; \
+      assert c.startswith('4.6'), c; assert q=='0.6.4', q; assert t=='0.1.11', t; \
       import inspect as _i; from tvm_ffi.utils.kwargs_wrapper import make_kwargs_wrapper as _mkw; \
       assert 'map_dataclass_to_tuple' in _i.signature(_mkw).parameters, 'tvm-ffi too old for cutlass 4.6 cute.compile'; \
       from quack import layout_utils; print('quack/cutlass/tvm-ffi ABI compatible')"
 
-# FlashInfer 0.6.16.post3 — python+cubin+jit-cache MUST match exactly. cubin lives on
+# FlashInfer 0.6.18 — python+cubin+jit-cache MUST match exactly. cubin lives on
 # flashinfer.ai/whl/, the aarch64 cu130 jit-cache wheel on flashinfer.ai/whl/cu130/ (new:
 # prebuilt JIT cache now works on GB10 — no more purge-and-rebuild). Purge stale caches first.
 RUN pip uninstall -y flashinfer-jit-cache flashinfer-cubin 2>&1 | tail -2 || true; \
     pip install --no-cache-dir \
         --extra-index-url https://flashinfer.ai/whl/ \
         --extra-index-url https://flashinfer.ai/whl/cu130/ \
-        "flashinfer-python==0.6.16.post3" "flashinfer-cubin==0.6.16.post3" \
-        "flashinfer-jit-cache==0.6.16.post3" 2>&1 | tail -4 && \
+        "flashinfer-python==0.6.18" "flashinfer-cubin==0.6.18" \
+        "flashinfer-jit-cache==0.6.18" 2>&1 | tail -4 && \
     python3 -c "import flashinfer, importlib.metadata as m; \
-      v=flashinfer.__version__; assert v.startswith('0.6.16.post3'), v; \
-      c=m.version('flashinfer-cubin'); assert c.startswith('0.6.16.post3'), c; \
-      j=m.version('flashinfer-jit-cache'); assert j.startswith('0.6.16.post3'), j; \
+      v=flashinfer.__version__; assert v.startswith('0.6.18'), v; \
+      c=m.version('flashinfer-cubin'); assert c.startswith('0.6.18'), c; \
+      j=m.version('flashinfer-jit-cache'); assert j.startswith('0.6.18'), j; \
       print('flashinfer trio matched:', v, '| cubin', c, '| jit-cache', j)"
 # NOTE: no `flashinfer download-cubin` here — the cubin + jit-cache WHEELS ship the
 # kernels at 0.6.16 (the downloader re-fetches 23k cubins for 20+ min and can flake;
@@ -148,7 +149,7 @@ RUN pip uninstall -y flashinfer-jit-cache flashinfer-cubin 2>&1 | tail -2 || tru
 # version — asserts use startswith, not exact match.
 
 # torchcodec 0.16.0 (2026-08-13): stable-ABI, torch>=2.11-compatible, aarch64 wheels.
-# Re-added after the 0.14-vs-torch-2.11 ABI break; v0.27.1 lists torchcodec>=0.14 in cuda.txt.
+# Re-added after the 0.14-vs-torch-2.11 ABI break; v0.29.0 lists torchcodec>=0.14 in cuda.txt.
 # Import-probe hard-gates it: a PRESENT-but-broken torchcodec throws uncaught OSError at
 # serve time, which is strictly worse than absence.
 RUN pip install --no-cache-dir "torchcodec==0.16.0" 2>&1 | tail -2 && \
@@ -165,7 +166,7 @@ RUN pip install --no-cache-dir "scipy>=1.11" 2>&1 | tail -3 && \
       2>&1 | tail -3 || \
     echo "[WARN] turboquant install attempted; check logs above if needed"
 
-# transformers 5.14.1 — the v0.27.1 upstream-tested pin (was 5.12.1). Fleet A/B before push.
+# transformers 5.14.1 — the v0.29.0 upstream-tested pin (was 5.12.1). Fleet A/B before push.
 RUN pip install --no-cache-dir --upgrade "transformers==5.14.1" 2>&1 | tail -3 && \
     python3 -c "import transformers; print('transformers:', transformers.__version__)"
 
@@ -177,14 +178,14 @@ COPY verify.py /tmp/verify.py
 RUN python3 /tmp/verify.py && rm /tmp/verify.py
 
 # Smoke (from WORKDIR / so cwd doesn't shadow the installed pkg; dlopen stable-ABI vs the
-# driver stub): confirm all load-bearing AEON symbols survived the 0.27.1 merge, the DSpark
+# driver stub): confirm all load-bearing AEON symbols survived the 0.29.0 merge, the DSpark
 # Markov-head machinery is present+quantizable, and the runner routing is as designed.
 WORKDIR /
 RUN mkdir -p /tmp/cuda-stub && \
     ln -s /usr/local/cuda-13.0/targets/sbsa-linux/lib/stubs/libcuda.so /tmp/cuda-stub/libcuda.so.1 && \
     LD_LIBRARY_PATH=/tmp/cuda-stub:$LD_LIBRARY_PATH python3 -c "\
 import vllm._C_stable_libtorch; import vllm._moe_C_stable_libtorch; \
-import vllm, inspect; assert vllm.__version__.startswith('0.27.1'), vllm.__version__; \
+import vllm, inspect; assert vllm.__version__.startswith('0.29.0'), vllm.__version__; \
 from vllm import LLM, SamplingParams; from vllm.config import VllmConfig; \
 import vllm.model_executor.models.qwen3_dflash as q; assert 'sliding_attention_layer_names' in inspect.getsource(q), 'V1 SWA carry lost'; \
 assert hasattr(q, 'dflash_has_any_non_causal'), 'dflash_has_any_non_causal missing'; \
@@ -219,11 +220,11 @@ RUN python3 /tmp/nvfp4_kv_gate.py && rm /tmp/nvfp4_kv_gate.py
 
 RUN rm -rf /build /root/.cache/pip
 
-LABEL ai.aeon.vllm_base="vLLM 0.27.1 (from-source, sm_121a 3-way merge + 8 cherry-picks)" \
+LABEL ai.aeon.vllm_base="vLLM 0.29.0 (from-source, sm_121a 3-way merge + 8 cherry-picks)" \
       ai.aeon.model="fleet: Gemma-4-26B-A4B, Gemma-4-31B-DECKARD (NVFP4_AWQ), Qwen3.6-27B, Qwen3.6-35B-A3B" \
       ai.aeon.hardware="NVIDIA DGX Spark GB10 SM121" \
-      ai.aeon.features="gemma4,qwen3.6,dflash,dflash-swa-mrv2,dspark,dspark-markov-heads,dspark-markov-quantized,dspark-topk,nvfp4,nvfp4-awq,nvfp4-kv,nvfp4-kv-nhd-safe,fp8-kv,spec-kv-dtype,hybrid-apc-fix,packed-kv-zeroer-fix,gdn-gate-align,flashinfer-0.6.16.post3,torch-2.13.0,triton-3.7.1,cutlass-dsl-4.6.0,quack-0.6.1,tvm-ffi-0.1.11,tilelang-0.1.12,nccl-2.30.7,torchcodec-0.16.0,uma-clamp,thread-local-capture,tp2-ready,turboquant,tool-calling,mrv2-default-routing" \
-      org.opencontainers.image.description="AEON vLLM Ultimate — vLLM 0.27.1 built from source for DGX Spark / Blackwell (sm_121a/GB10). DSpark Markov heads (quantized, #50424) + top-k projection (#49969), DFlash SWA on MRv2 (upstream #47914/#48113) with V1 carries as fallback, Triton NVFP4-KV (NHD-safe slicing), NVFP4_AWQ, packed-KV zeroer fix (#50276), GDN spec-token gate fix (#51812), hybrid-APC fix (#51843), DSpark bugfix set, thread_local capture at all graph sites (TP=2 2x-Spark ready, eager-first cross-node), torch 2.13.0 + Triton 3.7.1 + FlashInfer 0.6.16.post3 trio + NCCL 2.30.7." \
+      ai.aeon.features="gemma4,qwen3.6,dflash,dflash-swa-mrv2,dspark,dspark-markov-heads,dspark-markov-quantized,dspark-topk,nvfp4,nvfp4-awq,nvfp4-kv,nvfp4-kv-nhd-safe,fp8-kv,spec-kv-dtype,hybrid-apc-fix,packed-kv-zeroer-fix,gdn-gate-align,flashinfer-0.6.18,torch-2.13.0,triton-3.7.1,cutlass-dsl-4.6.0,quack-0.6.1,tvm-ffi-0.1.11,tilelang-0.1.12,nccl-2.30.7,torchcodec-0.16.0,uma-clamp,thread-local-capture,tp2-ready,turboquant,tool-calling,mrv2-default-routing" \
+      org.opencontainers.image.description="AEON vLLM Ultimate — vLLM 0.29.0 built from source for DGX Spark / Blackwell (sm_121a/GB10). DSpark Markov heads (quantized, #50424) + top-k projection (#49969), DFlash SWA on MRv2 (upstream #47914/#48113) with V1 carries as fallback, Triton NVFP4-KV (NHD-safe slicing), NVFP4_AWQ, packed-KV zeroer fix (#50276), GDN spec-token gate fix (#51812), hybrid-APC fix (#51843), DSpark bugfix set, thread_local capture at all graph sites (TP=2 2x-Spark ready, eager-first cross-node), torch 2.13.0 + Triton 3.7.1 + FlashInfer 0.6.18 trio + NCCL 2.30.7." \
       org.opencontainers.image.documentation="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
       org.opencontainers.image.source="https://github.com/AEON-7/vllm-ultimate-dgx-spark" \
       org.opencontainers.image.licenses="Apache-2.0"
