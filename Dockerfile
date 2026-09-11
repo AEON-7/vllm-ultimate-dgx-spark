@@ -193,7 +193,7 @@ import vllm.v1.spec_decode.utils as u; assert 'is_valid_ctx' in inspect.getsourc
 import vllm.v1.attention.backends.triton_attn as t; assert 'nvfp4' in inspect.getsource(t).lower(), 'NVFP4-KV lost'; \
 import vllm.v1.spec_decode.dflash as d; assert 'dflash-blocktable-unpad' in inspect.getsource(d), 'blocktable slice lost'; \
 import vllm.config.compilation as cc; assert 'AEON widened gate' in inspect.getsource(cc), 'cudagraph align widening lost'; \
-import vllm.v1.worker.gpu_model_runner as gmr; assert 'uma-negative-cudagraph-estimate-clamp' in inspect.getsource(gmr), 'UMA clamp lost'; \
+_uma=any('uma-negative-cudagraph-estimate-clamp' in inspect.getsource(__import__(n, fromlist=['x'])) for n in ('vllm.v1.worker.gpu_model_runner','vllm.v1.worker.gpu.model_runner')); assert _uma, 'UMA clamp lost'; \
 import vllm.envs as e; assert e.VLLM_USE_V2_MODEL_RUNNER is None, 'V2 runner pin unexpectedly baked'; \
 import vllm.config.vllm as cv; src=inspect.getsource(cv.VllmConfig.use_v2_model_runner.fget); \
 assert src.index('VLLM_USE_V2_MODEL_RUNNER') < src.index('dspark'), 'env precedence changed'; \
