@@ -5,26 +5,26 @@
 # org.opencontainers.image.source is not set, which is what links a package to its repo and
 # makes GitHub render that repo's README on the package page. Setting it fixes both problems.
 #
-# Build:  docker build -f Dockerfile.labels -t aeon-vllm-ultimate:0.27.1-omni-dflash2 \
-#           --build-arg BASE=aeon-vllm-ultimate:0.27.1-omni-dflash2 .
-ARG BASE=aeon-vllm-ultimate:0.27.1-omni-dflash2
+# Build:  docker build -f Dockerfile.labels -t aeon-vllm-ultimate:0.29.0-omni-dflash2 \
+#           --build-arg BASE=aeon-vllm-ultimate:0.29.0-omni-dflash2 .
+ARG BASE=aeon-vllm-ultimate:0.29.0-omni-dflash2
 FROM ${BASE}
 
 LABEL org.opencontainers.image.title="AEON vLLM Ultimate (omni)"
 LABEL org.opencontainers.image.source="https://github.com/AEON-7/vllm-ultimate-dgx-spark"
-LABEL org.opencontainers.image.documentation="https://github.com/AEON-7/vllm-ultimate-dgx-spark/blob/main/docs/RELEASE-0.27.1-omni.md"
+LABEL org.opencontainers.image.documentation="https://github.com/AEON-7/vllm-ultimate-dgx-spark/blob/main/docs/RELEASE-0.29.0-omni.md"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
-LABEL org.opencontainers.image.version="0.27.1-omni"
+LABEL org.opencontainers.image.version="0.29.0-omni"
 LABEL org.opencontainers.image.base.name="nvidia/cuda:13.0.2-base-ubuntu22.04"
 LABEL org.opencontainers.image.vendor="AEON-7"
 
-LABEL org.opencontainers.image.description="AEON vLLM Ultimate 0.27.1-omni - vLLM 0.27.1 built from source for DGX Spark / Blackwell (sm_121a/GB10, aarch64, CUDA 13). \
+LABEL org.opencontainers.image.description="AEON vLLM Ultimate 0.29.0-omni - vLLM 0.29.0 built from source for DGX Spark / Blackwell (sm_121a/GB10, aarch64, CUDA 13). \
 ONE IMAGE for text, vision, audio-in and SPEECH-OUT. \
-OMNI STACK: vllm-omni 0.27.0rc1 layered in, so Thinker/Talker/Code2Wav speech synthesis works (stock vLLM strips the voice half via skip_prefixes) - 10 speech-output families registered incl. Qwen3-Omni, MiniCPM-o 4.5, Step-Audio 2, plus the Qwen3-TTS voice store with zero-shot cloning and voice design. \
+OMNI STACK: vllm-omni (0.29-compatible revision) layered in, so Thinker/Talker/Code2Wav speech synthesis works (stock vLLM strips the voice half via skip_prefixes) - 10 speech-output families registered incl. Qwen3-Omni, MiniCPM-o 4.5, Step-Audio 2, plus the Qwen3-TTS voice store with zero-shot cloning and voice design. \
 AUDIO-IN: PyAV + soundfile + librosa + soxr baked in, with a gate that forces a real 24kHz->16kHz resample. \
-SPECULATIVE DECODING, all families in one image: DFlash 2 (upstream PR #52816 cherry-picked - first 0.27.1 image to ship it, incl. BOTH the layer_type forward and the is_causal precedence fix without which DFlash2 silently degrades to DFlash1), DFlash, DSpark quantized Markov heads, MTP self-spec, Eagle/Eagle3. \
+SPECULATIVE DECODING, all families in one image: DFlash 2 (upstream PR #52816 cherry-picked - first 0.29.0 image to ship it, incl. BOTH the layer_type forward and the is_causal precedence fix without which DFlash2 silently degrades to DFlash1), DFlash, DSpark quantized Markov heads, MTP self-spec, Eagle/Eagle3. \
 LONG CONTEXT: 1M on Qwen3.8-27B via official YaRN factor 4.0 (needle-verified 3/3 at 272K and 544K). Note rope_parameters must nest under text_config or the override is a silent no-op. \
 TP=2 over RoCE with cross-node CUDA graphs - capture AND replay, contradicting upstream #46253; the load-bearing carry is #48053 thread_local, NOT NCCL 2.30.7 (this image runs 2.29.7, there is no 2.30.x floor). RDMA proven by counters: 3210 MB port_xmit_data vs 0 MB TCP. \
 ALSO: Triton NVFP4-KV (NHD-safe, no as_strided), mistral_common>=1.11.6 fix (every prior image shipped 1.11.1 and broke vllm.tokenizers.mistral), SLIM rebase 18.3 GB vs 50.6 GB. \
 GOTCHA WORTH KNOWING: with spec decode you must set attention_backend INSIDE --speculative-config or FlashInfer silently downgrades FULL_AND_PIECEWISE cudagraphs to PIECEWISE. Healthy signature: 6 FULL + 13 PIECEWISE. \
-Full release notes: docs/RELEASE-0.27.1-omni.md"
+Full release notes: docs/RELEASE-0.29.0-omni.md"

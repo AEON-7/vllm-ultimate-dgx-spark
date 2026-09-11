@@ -371,7 +371,7 @@ Substitute your own device/interface names — `ls /sys/class/infiniband/` and
 docker run -d --name tp2-node0 --gpus all --ipc=host --shm-size=16g --net=host \
   -e VLLM_HOST_IP=10.10.10.1 \
   -e NCCL_SOCKET_IFNAME=enp1s0f0np0 -e GLOO_SOCKET_IFNAME=enp1s0f0np0 \
-  -e NCCL_IB_HCA==rocep1s0f0:1 -e NCCL_IB_GID_INDEX=3 \
+  -e NCCL_IB_HCA=rocep1s0f0:1 -e NCCL_IB_GID_INDEX=3 \
   --device /dev/infiniband --cap-add IPC_LOCK --ulimit memlock=-1:-1 \
   -v /models/YOUR-NVFP4-BODY:/model:ro \
   -v /models/YOUR-DSPARK-DRAFTER:/dspark:ro \
