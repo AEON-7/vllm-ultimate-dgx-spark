@@ -174,8 +174,8 @@ COPY humming-stub/ /tmp/humming-stub/
 RUN pip install --no-cache-dir /tmp/humming-stub && rm -rf /tmp/humming-stub && \
     python3 -c "from humming.dtypes import DataType; print('humming-stub: importable')"
 
-COPY fix_reasoning_literal.py /tmp/fix_reasoning_literal.py
-RUN python3 /tmp/fix_reasoning_literal.py && rm /tmp/fix_reasoning_literal.py
+COPY sampling_params.aeon029.py /usr/local/lib/python3.12/site-packages/vllm/sampling_params.py
+RUN python3 -c "from vllm.sampling_params import SamplingParams, validate_reasoning_eos_policy; assert validate_reasoning_eos_policy(None)=='force_end'; assert SamplingParams().reasoning_eos_policy=='force_end'; print('reasoning_eos smoke OK')"
 
 COPY verify.py /tmp/verify.py
 RUN python3 /tmp/verify.py && rm /tmp/verify.py
