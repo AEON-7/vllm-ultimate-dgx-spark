@@ -200,7 +200,7 @@ from vllm import LLM, SamplingParams; from vllm.config import VllmConfig; \
 import vllm.model_executor.models.qwen3_dflash as q; assert 'sliding_attention_layer_names' in inspect.getsource(q), 'V1 SWA carry lost'; \
 assert hasattr(q, 'dflash_has_any_non_causal'), 'dflash_has_any_non_causal missing'; \
 import vllm.v1.spec_decode.utils as u; assert 'is_valid_ctx' in inspect.getsource(u), 'ctx-slot mask lost'; \
-import vllm.v1.attention.backends.triton_attn as t; assert 'nvfp4' in inspect.getsource(t).lower(), 'NVFP4-KV lost'; \
+import vllm.v1.attention.ops.triton_reshape_and_cache_flash as _trc; assert 'nvfp4' in inspect.getsource(_trc).lower() or 'nvfp4_kv_cache_split_views' in inspect.getsource(_trc), 'NVFP4-KV lost'; \
 import vllm.v1.spec_decode.dflash as d; assert 'dflash-blocktable-unpad' in inspect.getsource(d), 'blocktable slice lost'; \
 import vllm.config.compilation as cc; assert 'AEON widened gate' in inspect.getsource(cc), 'cudagraph align widening lost'; \
 _uma=any('uma-negative-cudagraph-estimate-clamp' in inspect.getsource(__import__(n, fromlist=['x'])) for n in ('vllm.v1.worker.gpu_model_runner','vllm.v1.worker.gpu.model_runner')); assert _uma, 'UMA clamp lost'; \
