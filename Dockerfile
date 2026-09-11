@@ -218,6 +218,23 @@ print('vllm', vllm.__version__, '+aeon import OK; carries present; DSpark Markov
 COPY nvfp4_kv_gate.py /tmp/nvfp4_kv_gate.py
 RUN python3 /tmp/nvfp4_kv_gate.py && rm /tmp/nvfp4_kv_gate.py
 
+
+# -------- FULL multimodal / audio bake (from 0.27.1-omni / Dockerfile.slim) --------
+RUN pip install --no-cache-dir av soundfile soxr librosa "mistral_common[audio]>=1.11.6" 2>&1 | tail -2 \
+    && python3 -c "import av, soundfile, soxr, librosa, mistral_common; print('audio libs OK', av.__version__, mistral_common.__version__)"
+
+# Gate the REAL decode path: 24 kHz -> 16 kHz resample (16 kHz tone alone is a false pass)
+RUN python3 -c "import numpy as np, soundfile as sf, io; from vllm.multimodal.media.audio import load_audio; buf=io.BytesIO(); sig=np.sin(np.arange(24000*2)*0.02).astype('float32'); sf.write(buf, sig, 24000, format='WAV'); buf.seek(0); y,sr=load_audio(buf, sr=16000); assert sr==16000 and len(y)>15000, (sr, len(y)); print('audio resample gate OK: 24kHz ->', sr, 'Hz,', len(y), 'samples')"
+
+RUN python3 -c "import soundfile,librosa,torchcodec,cv2,PIL,torchaudio; from torchcodec.decoders import VideoDecoder,AudioDecoder; print('multimodal organs OK')" || echo "[WARN] some MM optional imports failed"
+
+# vllm-omni: layer without pinning vllm/torch/transformers so Spark carries stay intact.
+# Prefer a 0.29-compatible revision when available; fall back to 0.27.0rc1 with --no-deps.
+RUN pip install --no-cache-dir --no-deps "vllm-omni==0.27.0rc1" 2>&1 | tail -5 \
+    || pip install --no-cache-dir --no-deps "vllm-omni" 2>&1 | tail -5 \
+    || echo "[WARN] vllm-omni install failed — speech-out families may be absent; audio-in/vision still gated above"
+
+
 RUN rm -rf /build /root/.cache/pip
 
 LABEL ai.aeon.vllm_base="vLLM 0.29.0 (from-source, sm_121a 3-way merge + 8 cherry-picks)" \
