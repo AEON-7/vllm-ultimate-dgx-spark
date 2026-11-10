@@ -4,6 +4,8 @@
 [![vLLM](https://img.shields.io/badge/vLLM-0.29.0%2Baeon.sm__121a.omni-orange)](https://github.com/vllm-project/vllm)
 [![sm_121a](https://img.shields.io/badge/sm__121a-DGX%20Spark-green)](https://www.nvidia.com/en-us/data-center/dgx-spark/)
 
+[![Buy me a lotus tea on LotusMake](https://lotusmake.com/badges/lotus-tea-dark.v1.svg)](https://lotusmake.com/support?via=tea)
+
 **One container, the whole fleet.** A single image — `ghcr.io/aeon-7/aeon-vllm-ultimate:latest` — serves every AEON model on **NVIDIA DGX Spark (GB10, sm_121a)** and other consumer-Blackwell GPUs (RTX 50 series): **Gemma-4-26B-A4B**, **Qwen3.6-27B**, and **Qwen3.6-35B-A3B** all run on the same build, with DFlash speculative decoding, NVFP4 weights, NVFP4/FP8 KV cache, and the OpenAI-compatible gateway intact.
 
 Built on **vLLM v0.29.0 compiled from source for sm_121a (see 0.29-omni release note)**, merged with the AEON speculative-decoding stack: **DSpark Markov-head speculation (quantized heads)** + Triton software **NVFP4 KV cache** (PR #44389, NHD-safe rewrite) + **DFlash** (SWA drafters native on Model-Runner-V2) + the **AEON DGX Spark runtime patches** + **TurboQuant**.
@@ -665,11 +667,15 @@ This container is provided "AS IS" — see the legal section below.
 
 ## ☕ Support the work
 
-AEON-7 models, drafters and tools are built and trained independently, on my own hardware. If they're useful to you, please consider supporting development:
+AEON-7 models, drafters and tools are built and trained independently, on my own hardware. If they're useful to you, please consider supporting development.
 
-**[Become a member on Patreon → patreon.com/cw/AeonForge7/membership](https://www.patreon.com/cw/AeonForge7/membership)**
+Patreon wrongfully shut down our account without notice and never responded to our appeals, so we built something even better. You can now support the work on **LotusMake**: buy us a Lotus Tea, fund GPU hours, back a project you want to see done, or subscribe for early and full access to publications while supporting what we build. You can become a creator there too: join, apply to become a creator, and get paid for the work you do in public.
 
-Milestones unlock bigger work: reaching **500 paid supporters** will fund fine-tuning larger models and bigger project releases. Supporters also get early access to new releases, such as the [AEON DFlash2 drafter](https://www.patreon.com/AeonForge7/posts/early-access-for-171543895).
+[![Buy me a lotus tea on LotusMake](https://lotusmake.com/badges/lotus-tea-dark.v1.svg)](https://lotusmake.com/support?via=tea)
+
+**[AEON FORGE on LotusMake → lotusmake.com/c/aeon-forge](https://lotusmake.com/c/aeon-forge)** · **[Subscribe for early and full access](https://lotusmake.com/support?mode=tiers&from=%2Fc%2Faeon-forge)**
+
+Milestones unlock bigger work: reaching **500 paid supporters** will fund fine-tuning larger models and bigger project releases. Subscribers also get early access to new releases, such as the [AEON DFlash2 drafter](https://huggingface.co/AEON-7/AEON-DFlash2-Qwen3.8-27B).
 
 If this container saves you days of vLLM compile-and-patch on Spark, tips are deeply appreciated — they go directly toward more compute, more models, and more open releases.
 
