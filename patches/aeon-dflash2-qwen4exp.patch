@@ -1,0 +1,109 @@
+--- a/vllm/models/qwen4_exp/nvidia/model.py
++++ b/vllm/models/qwen4_exp/nvidia/model.py
+@@ -42,6 +42,7 @@
+     SupportsLoRA,
+     SupportsMRoPE,
+     SupportsPP,
++    SupportsEagle3,
+     _require_is_multimodal,
+ )
+ from vllm.model_executor.models.qwen3_5 import (
+@@ -541,6 +542,8 @@
+             hidden_states = intermediate_tensors["hidden_states"]
+ 
+         full_num_tokens = positions.shape[-1]
++        _aeon_aux = getattr(self, "_aeon_aux_layers", ())
++        aux_hidden_states = []
+         block_output = None
+         injection = None
+         last_layer = None
+@@ -596,6 +599,22 @@
+                 block_output = None
+                 injection = None
+                 hidden_states = hidden_states + deepstack_embed
++            # AEON DFlash2 capture: completed output of this layer (runner passes
++            # target_layer_ids + 1), averaged over the hyper-connection streams.
++            if _aeon_aux and (layer_idx + 1) in _aeon_aux:
++                _cur = (
++                    hidden_states
++                    if block_output is None
++                    else layer.mlp_hyper_connection.combine(
++                        hidden_states, block_output, injection
++                    )
++                )
++                _cur = _cur.unflatten(
++                    -1, (self.config.hc_count, self.config.hidden_size)
++                ).mean(dim=-2)
++                if self.use_hc_sequence_parallel:
++                    _cur = sp_all_gather(_cur.contiguous())[:full_num_tokens]
++                aux_hidden_states.append(_cur)
+ 
+         if not get_pp_group().is_last_rank:
+             # PP transports one tensor, not the delayed HC tuple. Materialize
+@@ -637,6 +656,8 @@
+             # this tensor is needed by the final mixer regardless).
+             num_tokens = multi_hidden.shape[0]
+             self._mtp_hidden_buffer[:num_tokens].copy_(multi_hidden)
++        if _aeon_aux:
++            return sample_hidden_states, aux_hidden_states
+         return sample_hidden_states
+ 
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+@@ -690,6 +711,7 @@
+     SupportsLoRA,
+     SupportsMRoPE,
+     SupportsPP,
++    SupportsEagle3,
+     Qwen4ExpMixtureOfExperts,
+     IsHybrid,
+ ):
+@@ -755,6 +777,15 @@
+ 
+         return Qwen4ExpModelState
+ 
++    # AEON DFlash2 hook (EAGLE3-style aux hidden states)
++    def set_aux_hidden_state_layers(self, layers: tuple[int, ...]) -> None:
++        inner = self.language_model.model if hasattr(self, "language_model") else self.model
++        inner._aeon_aux_layers = tuple(int(x) for x in layers)
++        print(f"AEON_DFLASH2_CAPTURE layers(+1)={inner._aeon_aux_layers} hc_mean=True", flush=True)
++
++    def get_eagle3_default_aux_hidden_state_layers(self) -> tuple[int, ...]:
++        return (6, 16, 26, 36, 46)
++
+     def forward(
+         self,
+         input_ids: torch.Tensor | None,
+@@ -938,6 +969,7 @@
+     Qwen3_5ForConditionalGeneration,
+     HasInnerState,
+     SupportsHCSP,
++    SupportsEagle3,
+     Qwen4ExpMixtureOfExperts,
+ ):
+     """Qwen3-VL vision tower backed by the Qwen4Exp language model."""
+@@ -1088,6 +1120,15 @@
+     def get_mtp_target_hidden_states(self) -> torch.Tensor | None:
+         return self.language_model.get_mtp_target_hidden_states()
+ 
++    # AEON DFlash2 hook (EAGLE3-style aux hidden states)
++    def set_aux_hidden_state_layers(self, layers: tuple[int, ...]) -> None:
++        inner = self.language_model.model if hasattr(self, "language_model") else self.model
++        inner._aeon_aux_layers = tuple(int(x) for x in layers)
++        print(f"AEON_DFLASH2_CAPTURE layers(+1)={inner._aeon_aux_layers} hc_mean=True", flush=True)
++
++    def get_eagle3_default_aux_hidden_state_layers(self) -> tuple[int, ...]:
++        return (6, 16, 26, 36, 46)
++
+     def forward(
+         self,
+         input_ids: torch.Tensor | None,
+--- a/vllm/model_executor/models/config.py
++++ b/vllm/model_executor/models/config.py
+@@ -1052,6 +1052,7 @@
+             "mtp",
+             "ngram",
+             "ngram_gpu",
++            "dflash",  # AEON: DFlash2 via the qwen4_exp aux-hidden-state hook
+         }:
+             raise NotImplementedError(
+                 "Qwen4Exp speculative decoding supports only its native MTP "
