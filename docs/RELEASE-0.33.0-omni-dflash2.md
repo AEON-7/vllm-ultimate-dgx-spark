@@ -75,14 +75,14 @@ Leave utilization at 0.74. Use 3 draft tokens (11 also starts; 7 does not).
 
 Same command with `--max-num-seqs 32`. KV at this utilization is about 8.7 GiB / 232K tokens (1.77x at a full 131K request). 32 short sessions fit; 32 full 131K contexts do not. Warm published-sampling ladder (256 new tokens): thinking off peaks at 86.4 tok/s aggregate (c=24) and is 83.5 at c=32; thinking on reaches 105.6 at c=32 with 0 loops. TTFT p95 stays under 1 s through 12 sessions, then grows (about 27 s at 16, 55 to 73 s at 32). Thinking-off loops appeared at c>=12 (1/12, 1/16, 2/24, 3/32). The 32-sequence cap also costs some low-concurrency speed vs the 4-sequence recipe (sampled off: 31.2 / 64.2 at c1 / c4, against 36.2 / 79.3).
 
-## Flash-Next recipe: 2 Sparks, throughput (131K, 16 sequences)
+## Flash-Next recipe: 2 Sparks, throughput (131K, 32 sequences, DFlash2 k=3)
 
-Run on both nodes, with `RANK=0` on the head node and `RANK=1` on the other. This is the recipe behind the published 2-Spark speed tables (23 November 2026). The `-e NCCL_SOCKET_IFNAME==$IF` line is intentional: NCCL treats a leading `=` as an exact interface match.
+Run on both nodes, with `RANK=0` on the head node and `RANK=1` on the other. The default is DFlash2 with 3 draft tokens and 32 sequences. This is the same image behind the published 2-Spark speed tables (23 November 2026). The `-e NCCL_SOCKET_IFNAME==$IF` line is intentional: NCCL treats a leading `=` as an exact interface match.
 
 ```sh
 IMG=ghcr.io/aeon-7/aeon-vllm-ultimate:2026-11-23-v0.33.0-omni-dflash2
 MODEL=/models/aeon-xs/vllm
-DRAFT=/models/dflash2                    # incoai/Qwen3.8-Flash-Next-DFlash2, DFlash2 variant only
+DRAFT=/models/dflash2                    # incoai/Qwen3.8-Flash-Next-DFlash2
 HEAD=<head-node-ip>; MYIP=<this-node-ip>; RANK=0; IF=<roce-if>; HCA=<roce-hca>
 HEADLESS=$([ $RANK = 0 ] || echo --headless)
 
@@ -91,25 +91,25 @@ docker run -d --name flashnext --network host --ipc host --shm-size 16g --gpus a
   -e NCCL_SOCKET_IFNAME==$IF -e GLOO_SOCKET_IFNAME=$IF -e TP_SOCKET_IFNAME=$IF \
   -e NCCL_IB_HCA==$HCA -e NCCL_IB_GID_INDEX=3 -e NCCL_IB_DISABLE=0 \
   -e NCCL_IB_ROCE_VERSION_NUM=2 -e NCCL_IB_ADDR_FAMILY=AF_INET -e VLLM_HOST_IP=$MYIP \
-  -v $MODEL:/model:ro \
+  -v $MODEL:/model:ro -v $DRAFT:/draft:ro \
   --entrypoint vllm $IMG serve /model --trust-remote-code --served-model-name flashnext \
   --tensor-parallel-size 2 --nnodes 2 --node-rank $RANK \
   --master-addr $HEAD --master-port 29531 --distributed-executor-backend mp \
   --limit-mm-per-prompt '{"image":2,"video":0}' --host 0.0.0.0 --port 8000 \
   --reasoning-parser qwen3 --tool-call-parser qwen3_coder --enable-auto-tool-choice \
   --enable-prefix-caching \
-  --max-model-len 131072 --max-num-seqs 16 --gpu-memory-utilization 0.80 \
+  --max-model-len 131072 --max-num-seqs 32 --gpu-memory-utilization 0.80 \
   --max-num-batched-tokens 16384 \
-  --speculative-config '{"method":"mtp","num_speculative_tokens":3}' \
+  --speculative-config '{"method":"dflash","model":"/draft","num_speculative_tokens":3}' \
   --override-generation-config '{"temperature":0.6,"top_p":0.95,"top_k":20,"presence_penalty":0.5,"repetition_penalty":1.0}' \
   $HEADLESS
 ```
 
-For the DFlash2 variant, mount the drafter (`-v $DRAFT:/draft:ro`) and replace the speculative config with `'{"method":"dflash","model":"/draft","num_speculative_tokens":3}'`. For a text-only server, use `--language-model-only` in place of `--limit-mm-per-prompt`.
+For the MTP alternate, omit the `/draft` mount, use `--max-num-seqs 16`, and replace the speculative config with `'{"method":"mtp","num_speculative_tokens":3}'`. For a text-only server, use `--language-model-only` in place of `--limit-mm-per-prompt`.
 
 Use 3 speculative tokens. The model's attention kernel needs draft count + 5 to divide its 1,664-token block, so 7 and 8 fail at startup. 11 starts and is slower.
 
-Published sampling, 25 November 2026, MTP, thinking off: 58.4 tok/s for one user, 329.9 tok/s aggregate across 16. Thinking on: 47.3 / 279.0. Thinking-on no-loop check: 5/5 clean.
+Published sampling, 25 November 2026, same-harness short-prompt ladder (256 new tokens). DFlash2 k=3 at 32 sequences, thinking off: 59.7 / 141.5 / 183.0 / 247.9 / 242.9 tok/s at 1 / 4 / 8 / 16 / 32 sessions (accept about 0.50 to 0.57). Thinking on: 56.8 / 131.0 / 175.2 / 235.1 / 312.5 (accept about 0.45 to 0.47). MTP at 16 sequences, thinking off: 35.0 / 97.1 / 166.3 / 230.0. Thinking on: 33.4 / 88.2 / 168.0 / 231.9. An earlier four-workload MTP pass at 16 sequences was 58.4 / 329.9 thinking off and 47.3 / 279.0 thinking on. KV cache on the DFlash2 serve was 1,688,812 tokens (12.88x at 131K), so 32 full 131K contexts still do not fit.
 
 ## Flash-Next recipe: 2 Sparks, quality / long-think (256K, 4 sequences)
 
